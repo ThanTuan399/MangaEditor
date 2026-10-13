@@ -1,0 +1,2 @@
+APP_VERSION = "0.0.0-foundation"
+PROJECT_FORMAT_VERSION = 1
