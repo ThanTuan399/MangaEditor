@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from manga_editor.domain.geometry import Rect
-from manga_editor.domain.models import ContentRegion, MangaProject, Page, new_id
+from manga_editor.domain.models import ContentRegion, ImageLayer, LayerKind, MangaProject, Page, new_id
 from .history import History
 
 
@@ -79,6 +79,94 @@ class ProjectSession:
         if safe_rect.is_empty():
             raise ValueError("Phạm vi phải có chiều rộng và chiều cao lớn hơn 0.")
         self.transact("Cập nhật phạm vi vùng", lambda: region.set_area(area_kind, safe_rect))
+
+
+    def set_background_patch(self, page_id: str, region_id: str, color: str = "#ffffff") -> str:
+        page = self.project.page(page_id)
+        region = page.region(region_id)
+        if region.cleanup_area is None:
+            raise ValueError("Vùng này chưa có phạm vi xóa chữ.")
+        existing = page.layer_for_region(region_id, LayerKind.BACKGROUND_PATCH)
+
+        def mutate() -> None:
+            nonlocal existing
+            if existing is None:
+                existing = ImageLayer.background_patch(region_id, region.cleanup_area, color)
+                page.layers.append(existing)
+            else:
+                existing.payload["rect"] = region.cleanup_area.to_dict()
+                existing.payload["color"] = color
+                existing.visible = True
+
+        self.transact("Cập nhật bản vá nền", mutate)
+        return existing.id
+
+    def set_vietnamese_text(
+        self,
+        page_id: str,
+        region_id: str,
+        content: str,
+        family: str,
+        size: int,
+        align: str = "center",
+        color: str = "#000000",
+    ) -> str:
+        page = self.project.page(page_id)
+        region = page.region(region_id)
+        if region.text_frame is None:
+            raise ValueError("Vùng này chưa có khung đặt chữ Việt.")
+        if align not in {"left", "center", "right"}:
+            raise ValueError("Kiểu căn chữ không hợp lệ.")
+        existing = page.layer_for_region(region_id, LayerKind.VIETNAMESE_TEXT)
+
+        def mutate() -> None:
+            nonlocal existing
+            if existing is None:
+                existing = ImageLayer.vietnamese_text(
+                    region_id=region_id,
+                    rect=region.text_frame,
+                    content=content,
+                    family=family,
+                    size=size,
+                    align=align,
+                    color=color,
+                )
+                page.layers.append(existing)
+            else:
+                existing.payload.update(
+                    {
+                        "rect": region.text_frame.to_dict(),
+                        "content": content,
+                        "family": family,
+                        "size": int(size),
+                        "align": align,
+                        "color": color,
+                    }
+                )
+                existing.visible = True
+
+        self.transact("Cập nhật chữ Việt", mutate)
+        return existing.id
+
+    def set_layer_visibility(self, page_id: str, layer_id: str, visible: bool) -> None:
+        page = self.project.page(page_id)
+        layer = page.layer(layer_id)
+        if layer.kind == LayerKind.SOURCE:
+            return
+        if layer.visible == bool(visible):
+            return
+        self.transact("Ẩn/hiện layer", lambda: setattr(layer, "visible", bool(visible)))
+
+    def remove_region_layer(self, page_id: str, region_id: str, kind: LayerKind) -> None:
+        page = self.project.page(page_id)
+
+        def mutate() -> None:
+            page.layers[:] = [
+                layer for layer in page.layers
+                if not (layer.region_id == region_id and layer.kind == kind)
+            ]
+
+        self.transact("Xóa layer vùng", mutate)
 
     def undo(self) -> bool:
         state = self.history.undo(self.project, self.assets)
