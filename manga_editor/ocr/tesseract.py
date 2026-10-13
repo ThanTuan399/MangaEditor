@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -24,16 +25,30 @@ class TesseractEngine:
     name = "tesseract"
 
     def __init__(self, executable: str | None = None, timeout: int = 120):
-        self.executable = executable or shutil.which("tesseract") or "tesseract"
+        self.executable = self._resolve_executable(executable)
         self.timeout = timeout
 
+    @staticmethod
+    def _resolve_executable(explicit: str | None) -> str:
+        candidates = [
+            explicit,
+            os.environ.get("TESSERACT_CMD"),
+            shutil.which("tesseract"),
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if shutil.which(candidate) or Path(candidate).exists():
+                return str(candidate)
+        return explicit or os.environ.get("TESSERACT_CMD") or "tesseract"
+
     def is_available(self) -> bool:
-        path = shutil.which(self.executable)
-        if path:
-            return True
-        if Path(self.executable).exists():
-            return True
-        return False
+        return bool(
+            shutil.which(self.executable)
+            or Path(self.executable).exists()
+        )
 
     def available_languages(self) -> set[str]:
         if not self.is_available():
