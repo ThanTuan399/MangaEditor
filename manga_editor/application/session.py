@@ -56,6 +56,9 @@ class ProjectSession:
 
         def mutate() -> None:
             page.regions[:] = [item for item in page.regions if item.id != region_id]
+            page.layers[:] = [
+                layer for layer in page.layers if layer.region_id != region_id
+            ]
             for order, item in enumerate(sorted(page.regions, key=lambda x: x.order)):
                 item.order = order
 
