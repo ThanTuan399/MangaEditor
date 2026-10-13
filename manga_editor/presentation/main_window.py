@@ -1510,16 +1510,19 @@ class MainWindow(QMainWindow):
                     layer = page.layer_for_region(
                         region.id, LayerKind.VIETNAMESE_TEXT
                     )
-                    preview = (
-                        str(layer.payload.get("content", "")).replace(
-                            "\n", " / "
-                        ).strip()
-                        if layer is not None
-                        else ""
+                    source_preview = (
+                        region.source_text.replace("\n", " / ").strip()[:34]
+                        or "(chưa OCR)"
                     )
-                    preview = preview[:58] or "(chưa có chữ Việt)"
+                    vi_preview = (
+                        str(layer.payload.get("content", ""))
+                        .replace("\n", " / ")
+                        .strip()[:34]
+                        if layer is not None
+                        else "(chưa có VI)"
+                    )
                     item = QListWidgetItem(
-                        f"{region.order + 1:02d}. {preview}"
+                        f"{region.order + 1:02d}. Gốc: {source_preview} | VI: {vi_preview}"
                     )
                     item.setData(Qt.ItemDataRole.UserRole, region.id)
                     self.contents.addItem(item)
@@ -1630,6 +1633,12 @@ class MainWindow(QMainWindow):
                 self.vn_text.clear()
                 self.editor_region_id = None
                 self.editor_dirty = False
+                return
+
+            if (
+                self.editor_dirty
+                and self.editor_region_id == region.id
+            ):
                 return
 
             text_layer = page.layer_for_region(
@@ -1808,6 +1817,14 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, title, message)
 
     def closeEvent(self, event) -> None:
+        if self.ocr_task is not None and self.ocr_task.isRunning():
+            QMessageBox.information(
+                self,
+                "OCR đang chạy",
+                "Chờ tác vụ OCR hiện tại hoàn thành trước khi đóng ứng dụng.",
+            )
+            event.ignore()
+            return
         if (
             self._confirm_editor_changes()
             and self._confirm_discard()
