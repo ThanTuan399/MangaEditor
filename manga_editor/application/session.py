@@ -78,7 +78,19 @@ class ProjectSession:
         safe_rect = rect.clamp(page.width, page.height)
         if safe_rect.is_empty():
             raise ValueError("Phạm vi phải có chiều rộng và chiều cao lớn hơn 0.")
-        self.transact("Cập nhật phạm vi vùng", lambda: region.set_area(area_kind, safe_rect))
+
+        def mutate() -> None:
+            region.set_area(area_kind, safe_rect)
+            if area_kind == "cleanup_area":
+                patch = page.layer_for_region(region_id, LayerKind.BACKGROUND_PATCH)
+                if patch is not None:
+                    patch.payload["rect"] = safe_rect.to_dict()
+            elif area_kind == "text_frame":
+                text_layer = page.layer_for_region(region_id, LayerKind.VIETNAMESE_TEXT)
+                if text_layer is not None:
+                    text_layer.payload["rect"] = safe_rect.to_dict()
+
+        self.transact("Cập nhật phạm vi vùng", mutate)
 
 
     def set_background_patch(self, page_id: str, region_id: str, color: str = "#ffffff") -> str:
