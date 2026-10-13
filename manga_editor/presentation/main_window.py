@@ -441,6 +441,8 @@ class MainWindow(QMainWindow):
         self.current_region_id = None
         self.editor_region_id = None
         self.editor_dirty = False
+        self.ocr_editor_region_id = None
+        self.ocr_editor_dirty = False
         self._refresh_all()
 
     def import_page(self) -> None:
@@ -466,9 +468,8 @@ class MainWindow(QMainWindow):
         self.canvas.fit_page()
 
     def save_project(self) -> None:
-        if self.editor_dirty and self.current_region_id:
-            if not self._confirm_editor_changes():
-                return
+        if not self._confirm_editor_changes():
+            return
         if self.project_path is None:
             path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -518,6 +519,8 @@ class MainWindow(QMainWindow):
         self.current_region_id = None
         self.editor_region_id = None
         self.editor_dirty = False
+        self.ocr_editor_region_id = None
+        self.ocr_editor_dirty = False
         self._refresh_all(select_page_id=self.current_page_id)
         self.canvas.fit_page()
 
@@ -594,6 +597,8 @@ class MainWindow(QMainWindow):
         self.current_region_id = None
         self.editor_region_id = None
         self.editor_dirty = False
+        self.ocr_editor_region_id = None
+        self.ocr_editor_dirty = False
         self._refresh_all(select_page_id=self.current_page_id)
 
     def rename_region(self) -> None:
@@ -988,9 +993,12 @@ class MainWindow(QMainWindow):
         self.current_region_id = None
         self.editor_region_id = None
         self.editor_dirty = False
+        self.ocr_editor_region_id = None
+        self.ocr_editor_dirty = False
         self._refresh_regions()
         self._refresh_contents()
         self._load_region_layers_into_editor()
+        self._load_ocr_editor()
         self._refresh_canvas()
         self._refresh_layers()
 
@@ -1067,15 +1075,21 @@ class MainWindow(QMainWindow):
         self.current_region_id = region_id
         self.editor_region_id = region_id
         self.editor_dirty = False
+        self.ocr_editor_region_id = region_id
+        self.ocr_editor_dirty = False
         self._sync_region_selection_widgets()
         self._refresh_region_form()
         self._load_region_layers_into_editor()
+        self._load_ocr_editor()
         self._refresh_canvas()
         self.statusBar().showMessage(
             f"Đang làm việc với {self._current_region().name}."
         )
 
     def _confirm_editor_changes(self) -> bool:
+        if not self._confirm_ocr_editor_changes():
+            return False
+
         if (
             not self.editor_dirty
             or self.editor_region_id is None
@@ -1099,6 +1113,33 @@ class MainWindow(QMainWindow):
             self.editor_dirty = False
             return True
         return self._save_editor_to_region(self.editor_region_id)
+
+    def _confirm_ocr_editor_changes(self) -> bool:
+        if (
+            not self.ocr_editor_dirty
+            or self.ocr_editor_region_id is None
+            or self.current_page_id is None
+        ):
+            return True
+
+        result = QMessageBox.warning(
+            self,
+            "Chữ OCR đã sửa chưa lưu",
+            "Bạn đã sửa văn bản OCR nhưng chưa lưu vào Region. "
+            "Muốn lưu trước khi chuyển?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if result == QMessageBox.StandardButton.Cancel:
+            return False
+        if result == QMessageBox.StandardButton.Discard:
+            self.ocr_editor_dirty = False
+            return True
+        return self._save_ocr_editor_to_region(
+            self.ocr_editor_region_id, reviewed=False
+        )
 
     def _mark_editor_dirty(self) -> None:
         if self._syncing_ui or self.current_region_id is None:
@@ -1124,6 +1165,7 @@ class MainWindow(QMainWindow):
         self._refresh_regions()
         self._refresh_contents()
         self._load_region_layers_into_editor()
+        self._load_ocr_editor()
         self._refresh_canvas()
         self._refresh_layers()
 
@@ -1234,6 +1276,10 @@ class MainWindow(QMainWindow):
             self.text_align.setEnabled(enabled)
             self.cleanup_state.setEnabled(enabled)
             self.text_state.setEnabled(enabled)
+            self.ocr_state.setEnabled(enabled)
+            self.ocr_language.setEnabled(enabled)
+            self.ocr_layout.setEnabled(enabled)
+            self.ocr_edited_text.setEnabled(enabled)
 
             if region is None:
                 self.region_id.setText("—")
@@ -1241,7 +1287,7 @@ class MainWindow(QMainWindow):
                 self.ocr_rect.setText("—")
                 self.cleanup_rect.setText("—")
                 self.text_rect.setText("—")
-                self.ocr_state.setText("—")
+                self.ocr_state.setCurrentIndex(0)
                 self.cleanup_parts.clear()
                 return
 
@@ -1254,9 +1300,10 @@ class MainWindow(QMainWindow):
             self.text_rect.setText(
                 self._rect_text(region.text_frame)
             )
-            self.ocr_state.setText(
-                f"{STATE_LABELS[region.ocr_state]} · OCR bắt đầu ở v0.3"
+            ocr_index = self.ocr_state.findData(
+                region.ocr_state.value
             )
+            self.ocr_state.setCurrentIndex(max(0, ocr_index))
 
             cleanup_index = self.cleanup_state.findData(
                 region.cleanup_state.value
