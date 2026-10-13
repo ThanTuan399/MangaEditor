@@ -33,6 +33,46 @@ class ImageLayer:
     def source(cls) -> "ImageLayer":
         return cls(new_id("layer"), LayerKind.SOURCE, "Ảnh gốc", True, True)
 
+    @classmethod
+    def background_patch(cls, region_id: str, rect: Rect, color: str = "#ffffff") -> "ImageLayer":
+        return cls(
+            id=new_id("layer"),
+            kind=LayerKind.BACKGROUND_PATCH,
+            name="Bản vá nền",
+            visible=True,
+            locked=False,
+            region_id=region_id,
+            payload={"rect": rect.to_dict(), "color": color},
+        )
+
+    @classmethod
+    def vietnamese_text(
+        cls,
+        region_id: str,
+        rect: Rect,
+        content: str = "",
+        family: str = "Arial",
+        size: int = 32,
+        align: str = "center",
+        color: str = "#000000",
+    ) -> "ImageLayer":
+        return cls(
+            id=new_id("layer"),
+            kind=LayerKind.VIETNAMESE_TEXT,
+            name="Chữ Việt",
+            visible=True,
+            locked=False,
+            region_id=region_id,
+            payload={
+                "rect": rect.to_dict(),
+                "content": content,
+                "family": family,
+                "size": int(size),
+                "align": align,
+                "color": color,
+            },
+        )
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -120,6 +160,18 @@ class Page:
             if item.id == region_id:
                 return item
         raise KeyError(region_id)
+
+    def layer(self, layer_id: str) -> ImageLayer:
+        for item in self.layers:
+            if item.id == layer_id:
+                return item
+        raise KeyError(layer_id)
+
+    def layer_for_region(self, region_id: str, kind: LayerKind) -> ImageLayer | None:
+        for item in self.layers:
+            if item.region_id == region_id and item.kind == kind:
+                return item
+        return None
 
     def to_dict(self) -> dict:
         return {
