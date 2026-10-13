@@ -271,5 +271,87 @@ class DomainTests(unittest.TestCase):
         )
 
 
+    def test_ocr_machine_and_edited_text_are_separate(self):
+        region_id = self.session.add_region(self.page_id)
+        self.session.set_region_area(
+            self.page_id, region_id, "ocr_area", Rect(10, 20, 300, 120)
+        )
+        region = self.session.project.page(self.page_id).region(region_id)
+        revision = region.ocr_input_revision
+
+        self.assertTrue(
+            self.session.apply_ocr_result(
+                self.page_id,
+                region_id,
+                revision,
+                "機械の結果",
+                "fake",
+                confidence=0.9,
+            )
+        )
+        self.session.set_ocr_edited_text(
+            self.page_id, region_id, "人が直した結果", reviewed=True
+        )
+
+        region = self.session.project.page(self.page_id).region(region_id)
+        self.assertEqual(region.ocr_machine_text, "機械の結果")
+        self.assertEqual(region.ocr_edited_text, "人が直した結果")
+        self.assertEqual(region.source_text, "人が直した結果")
+        self.assertEqual(region.ocr_state, WorkState.REVIEWED)
+
+    def test_stale_ocr_result_is_rejected_after_input_changes(self):
+        region_id = self.session.add_region(self.page_id)
+        self.session.set_region_area(
+            self.page_id, region_id, "ocr_area", Rect(10, 20, 300, 120)
+        )
+        region = self.session.project.page(self.page_id).region(region_id)
+        old_revision = region.ocr_input_revision
+
+        self.session.set_ocr_settings(
+            self.page_id, region_id, "ja", "vertical"
+        )
+        self.assertNotEqual(
+            self.session.project.page(self.page_id)
+            .region(region_id)
+            .ocr_input_revision,
+            old_revision,
+        )
+
+        accepted = self.session.apply_ocr_result(
+            self.page_id,
+            region_id,
+            old_revision,
+            "Kết quả đã cũ",
+            "fake",
+        )
+        self.assertFalse(accepted)
+        self.assertEqual(
+            self.session.project.page(self.page_id)
+            .region(region_id)
+            .ocr_machine_text,
+            "",
+        )
+
+    def test_ocr_result_is_written_to_target_region_only(self):
+        first = self.session.add_region(self.page_id)
+        second = self.session.add_region(self.page_id)
+        self.session.set_region_area(
+            self.page_id, first, "ocr_area", Rect(10, 10, 100, 80)
+        )
+        self.session.set_region_area(
+            self.page_id, second, "ocr_area", Rect(200, 10, 100, 80)
+        )
+        page = self.session.project.page(self.page_id)
+        revision = page.region(first).ocr_input_revision
+
+        self.assertTrue(
+            self.session.apply_ocr_result(
+                self.page_id, first, revision, "Vùng một", "fake"
+            )
+        )
+        self.assertEqual(page.region(first).ocr_machine_text, "Vùng một")
+        self.assertEqual(page.region(second).ocr_machine_text, "")
+
+
 if __name__ == "__main__":
     unittest.main()
