@@ -1,4 +1,4 @@
-# MangaEditor — v0.1
+# MangaEditor — v0.2
 
 MangaEditor đang được dựng lại theo hướng **Region là đơn vị trung tâm, raw không bị phá và mọi chỉnh sửa nằm trên layer độc lập**.
 
@@ -15,32 +15,35 @@ MangaEditor đang được dựng lại theo hướng **Region là đơn vị tr
 
 ### v0.1 — Một trang đơn giản
 
-- Nhập ảnh raw.
-- Tạo Region.
-- Vẽ phạm vi xóa chữ và khung chữ Việt.
-- Tạo bản vá nền trắng hoặc màu phẳng trên layer riêng.
-- Nhập chữ Việt và chỉnh:
-  - phông;
-  - cỡ chữ;
-  - căn trái/giữa/phải;
-  - màu chữ;
-  - vị trí/kích thước bằng `text_frame`.
-- Ẩn/hiện patch và text layer.
-- Chữ vẫn chỉnh được sau khi lưu/mở lại.
-- Xuất PNG/JPEG từ raw + layer, giữ kích thước ảnh gốc.
-- Hoàn tác/làm lại các thao tác dữ liệu chính.
+- Patch nền trắng/màu trên layer riêng.
+- Chữ Việt chỉnh được và lưu lại được.
+- Ẩn/hiện patch và chữ.
+- Xuất PNG/JPEG đúng kích thước raw.
 
-## Chưa có ở v0.1
+### v0.2 — Region độc lập
 
-- OCR.
+- Danh sách Region có tên, thứ tự và trạng thái riêng.
+- Bấm Region trên ảnh ↔ chọn đúng nội dung.
+- Bấm nội dung ↔ làm nổi bật đúng Region.
+- Hai vùng sát/chạm nhau không tự gộp.
+- Một Region có nhiều `cleanup_parts` rời nhau.
+- “Tạo Region mới” và “Thêm mảng vào Region đang chọn” là hai thao tác riêng.
+- Đổi thứ tự không đổi ID.
+- Xóa, tách mảng và gộp Region theo thao tác chủ động.
+- Khi Region chồng nhau, app hỏi Region muốn chọn.
+- Trạng thái Nền và Chữ độc lập: Chưa làm / Đang làm / Đã duyệt.
+- Editor cảnh báo chữ chưa áp dụng trước khi chuyển Region.
+- Project format v2; tự migration project v1 khi mở.
+
+## Chưa có ở v0.2
+
+- OCR thật.
 - Dịch tự động.
-- Tự nhận diện bong bóng.
-- Cọ mask tự do.
-- Inpainting/phục hồi tranh phức tạp.
-- Chữ hiệu ứng.
-- Xử lý hàng loạt.
+- Nhận diện bong bóng tự động.
+- Inpainting/phục hồi nền phức tạp.
+- Xử lý cả chương.
 
-Các phần này sẽ được thêm theo từng mốc mà không thay lại Project/Page/Region.
+OCR bắt đầu ở v0.3.
 
 ## Chạy ứng dụng
 
@@ -57,20 +60,10 @@ python main.py
 python -m unittest discover -s tests -v
 ```
 
-Repo cũng có GitHub Actions để chạy `compileall` và unit test trên mỗi push.
+GitHub Actions chạy compile + unit tests + renderer + UI smoke test trên mỗi push.
 
-## Cấu trúc
+## Tài liệu
 
-```text
-main.py
-manga_editor/
-  domain/          # dữ liệu và quy tắc
-  application/     # điều phối + undo/redo
-  infrastructure/  # ảnh, lưu/mở, renderer
-  presentation/    # PySide6 UI/canvas
-tests/
-docs/
-```
-
-- Nền kiến trúc: `docs/V0_FOUNDATION.md`
-- Quy trình v0.1: `docs/V0_1.md`
+- `docs/V0_FOUNDATION.md`
+- `docs/V0_1.md`
+- `docs/V0_2.md`
