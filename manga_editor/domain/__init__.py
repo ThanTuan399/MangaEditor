@@ -1,5 +1,5 @@
 from .geometry import Rect
-from .models import ContentRegion, ImageLayer, LayerKind, MangaProject, Page, ProjectSettings
+from .models import ContentRegion, ImageLayer, LayerKind, MangaProject, Page, ProjectSettings, WorkState
 
 __all__ = [
     "Rect",
@@ -9,4 +9,5 @@ __all__ = [
     "MangaProject",
     "Page",
     "ProjectSettings",
+    "WorkState",
 ]
