@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from manga_editor.domain.geometry import Rect
@@ -28,22 +28,25 @@ class CanvasView(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.page: Page | None = None
         self.active_region_id: str | None = None
-        self.area_kind = "ocr_area"
+        self.area_kind = "cleanup_area"
         self.draw_once = False
         self._start: QPointF | None = None
         self._rubber: QGraphicsRectItem | None = None
 
-    def set_page(self, page: Page | None, image_bytes: bytes | None, active_region_id: str | None = None) -> None:
+    def set_page(
+        self,
+        page: Page | None,
+        rendered_image: QImage | None,
+        active_region_id: str | None = None,
+    ) -> None:
         self.page = page
         self.active_region_id = active_region_id
         self.scene().clear()
         self._rubber = None
-        if page is None or image_bytes is None:
+        if page is None or rendered_image is None or rendered_image.isNull():
             return
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(image_bytes):
-            raise ValueError("Không hiển thị được ảnh raw trong dự án.")
-        self.scene().addPixmap(pixmap)
+
+        self.scene().addPixmap(QPixmap.fromImage(rendered_image))
         self.scene().setSceneRect(QRectF(0, 0, page.width, page.height))
         self._draw_regions()
 
@@ -56,9 +59,15 @@ class CanvasView(QGraphicsView):
                 rect: Rect | None = getattr(region, area_kind)
                 if rect is None:
                     continue
-                pen = QPen(QColor(color_text), 3 if active else 1, Qt.PenStyle.DashLine)
+                pen = QPen(
+                    QColor(color_text),
+                    3 if active else 1,
+                    Qt.PenStyle.DashLine if active else Qt.PenStyle.DotLine,
+                )
                 pen.setCosmetic(True)
-                item = self.scene().addRect(rect.x, rect.y, rect.width, rect.height, pen)
+                item = self.scene().addRect(
+                    rect.x, rect.y, rect.width, rect.height, pen
+                )
                 item.setData(0, region.id)
                 item.setData(1, area_kind)
                 text = self.scene().addText(f"{region.name} · {label}")
@@ -92,7 +101,11 @@ class CanvasView(QGraphicsView):
             self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def mousePressEvent(self, event):
-        if self.draw_once and event.button() == Qt.MouseButton.LeftButton and self.page is not None:
+        if (
+            self.draw_once
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.page is not None
+        ):
             point = self._clamped_scene_point(event.position())
             self._start = point
             color = QColor(AREA_STYLE[self.area_kind][0])
@@ -101,6 +114,7 @@ class CanvasView(QGraphicsView):
             self._rubber = self.scene().addRect(QRectF(point, point), pen)
             event.accept()
             return
+
         if event.button() == Qt.MouseButton.LeftButton and not self.draw_once:
             item = self.itemAt(event.position().toPoint())
             while item is not None:
@@ -110,6 +124,7 @@ class CanvasView(QGraphicsView):
                     event.accept()
                     return
                 item = item.parentItem()
+
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -121,9 +136,15 @@ class CanvasView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.draw_once and self._start is not None and event.button() == Qt.MouseButton.LeftButton:
+        if (
+            self.draw_once
+            and self._start is not None
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
             end = self._clamped_scene_point(event.position())
-            rect = Rect.from_points(self._start.x(), self._start.y(), end.x(), end.y())
+            rect = Rect.from_points(
+                self._start.x(), self._start.y(), end.x(), end.y()
+            )
             area_kind = self.area_kind
             self.cancel_draw()
             if not rect.is_empty():
