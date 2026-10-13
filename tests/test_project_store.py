@@ -6,7 +6,7 @@ import zipfile
 
 from manga_editor.application.session import ProjectSession
 from manga_editor.domain.geometry import Rect
-from manga_editor.domain.models import MangaProject
+from manga_editor.domain.models import LayerKind, MangaProject
 from manga_editor.infrastructure.project_store import ProjectStore
 
 
@@ -18,6 +18,16 @@ class ProjectStoreTests(unittest.TestCase):
         session.set_region_area(page_id, region_id, "ocr_area", Rect(10, 20, 100, 200))
         session.set_region_area(page_id, region_id, "cleanup_area", Rect(30, 40, 50, 60))
         session.set_region_area(page_id, region_id, "text_frame", Rect(5, 6, 150, 240))
+        session.set_background_patch(page_id, region_id, "#fff4dc")
+        session.set_vietnamese_text(
+            page_id,
+            region_id,
+            "Bản dịch tiếng Việt",
+            "Arial",
+            30,
+            "center",
+            "#111111",
+        )
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "project.mep"
@@ -29,6 +39,13 @@ class ProjectStoreTests(unittest.TestCase):
         self.assertEqual(page.region(region_id).ocr_area, Rect(10, 20, 100, 200))
         self.assertEqual(page.region(region_id).cleanup_area, Rect(30, 40, 50, 60))
         self.assertEqual(page.region(region_id).text_frame, Rect(5, 6, 150, 240))
+        patch = page.layer_for_region(region_id, LayerKind.BACKGROUND_PATCH)
+        text = page.layer_for_region(region_id, LayerKind.VIETNAMESE_TEXT)
+        self.assertIsNotNone(patch)
+        self.assertIsNotNone(text)
+        self.assertEqual(patch.payload["color"], "#fff4dc")
+        self.assertEqual(text.payload["content"], "Bản dịch tiếng Việt")
+        self.assertEqual(text.payload["size"], 30)
         self.assertEqual(assets[page.raw_asset], b"immutable-raw")
 
     def test_format_version_is_in_manifest(self):
