@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
+from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QColorDialog,
     QComboBox,
     QFileDialog,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -33,9 +35,12 @@ from manga_editor.application.session import ProjectSession
 from manga_editor.domain.geometry import Rect
 from manga_editor.domain.models import LayerKind, WorkState
 from manga_editor.infrastructure.image_io import load_raw_image
+from manga_editor.infrastructure.ocr_crop import crop_raw_to_png
 from manga_editor.infrastructure.project_store import ProjectStore
 from manga_editor.infrastructure.renderer import render_page, save_rendered_page
+from manga_editor.ocr import OcrRequest, TesseractEngine
 from .canvas import CanvasView
+from .ocr_task import OcrTarget, OcrTask
 
 
 STATE_LABELS = {
@@ -48,7 +53,7 @@ STATE_LABELS = {
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"MangaEditor v0.2 — {APP_VERSION}")
+        self.setWindowTitle(f"MangaEditor v0.3 — {APP_VERSION}")
         self.resize(1540, 930)
 
         self.session = ProjectSession()
@@ -60,6 +65,10 @@ class MainWindow(QMainWindow):
         self.pending_draw_action = "set_area"
         self.editor_region_id: str | None = None
         self.editor_dirty = False
+        self.ocr_editor_region_id: str | None = None
+        self.ocr_editor_dirty = False
+        self.ocr_engine = TesseractEngine()
+        self.ocr_task: OcrTask | None = None
         self._syncing_ui = False
 
         self.canvas = CanvasView()
@@ -108,14 +117,13 @@ class MainWindow(QMainWindow):
         right_content = QWidget()
         right_layout = QVBoxLayout(right_content)
 
-        project_box = QGroupBox("v0.2 — Quản lý vùng thoại")
+        project_box = QGroupBox("v0.3 — OCR theo Region")
         project_layout = QVBoxLayout(project_box)
         self.project_name = QLabel()
         project_layout.addWidget(self.project_name)
         note = QLabel(
-            "Region có ID cố định. Hai vùng sát/chạm nhau không tự gộp. "
-            "Một Region có thể có nhiều mảng xóa rời nhau. "
-            "Tách/gộp chỉ xảy ra khi bạn chủ động."
+            "OCR chỉ đọc Region người dùng chọn trước. Kết quả máy và bản đã sửa "
+            "được lưu riêng; task nền luôn trả về đúng region_id + revision."
         )
         note.setWordWrap(True)
         project_layout.addWidget(note)
@@ -176,13 +184,16 @@ class MainWindow(QMainWindow):
         )
         form.addRow("Trạng thái chữ", self.text_state)
 
-        self.ocr_state = QLabel("Chưa làm · OCR bắt đầu ở v0.3")
+        self.ocr_state = self._state_combo()
+        self.ocr_state.currentIndexChanged.connect(
+            lambda: self._state_changed("ocr", self.ocr_state)
+        )
         form.addRow("Trạng thái OCR", self.ocr_state)
         region_layout.addLayout(form)
 
         self.area_combo = QComboBox()
         self.area_combo.addItem("Khung đặt chữ Việt", "text_frame")
-        self.area_combo.addItem("Vùng đọc OCR (để dành)", "ocr_area")
+        self.area_combo.addItem("Vùng đọc OCR", "ocr_area")
         self.area_combo.addItem(
             "Thay toàn bộ phạm vi xóa bằng 1 mảng", "cleanup_area"
         )
@@ -222,7 +233,83 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(region_box)
 
-        patch_box = QGroupBox("2. Nền của Region")
+        ocr_box = QGroupBox("2. OCR vùng đang chọn")
+        ocr_layout = QVBoxLayout(ocr_box)
+
+        ocr_form = QFormLayout()
+        self.ocr_language = QComboBox()
+        self.ocr_language.addItem("Tiếng Nhật", "ja")
+        self.ocr_language.addItem("Tiếng Anh", "en")
+        self.ocr_language.addItem("Tiếng Trung giản thể", "zh-Hans")
+        self.ocr_language.addItem("Tiếng Trung phồn thể", "zh-Hant")
+        self.ocr_language.addItem("Tiếng Hàn", "ko")
+        self.ocr_language.addItem("Tiếng Việt", "vi")
+        self.ocr_language.currentIndexChanged.connect(self._ocr_settings_changed)
+        ocr_form.addRow("Ngôn ngữ", self.ocr_language)
+
+        self.ocr_layout = QComboBox()
+        self.ocr_layout.addItem("Tự động / khối chữ", "auto")
+        self.ocr_layout.addItem("Chữ ngang", "horizontal")
+        self.ocr_layout.addItem("Chữ dọc", "vertical")
+        self.ocr_layout.currentIndexChanged.connect(self._ocr_settings_changed)
+        ocr_form.addRow("Bố cục", self.ocr_layout)
+
+        self.ocr_engine_label = QLabel()
+        ocr_form.addRow("Bộ đọc", self.ocr_engine_label)
+        ocr_layout.addLayout(ocr_form)
+
+        self.ocr_preview = QLabel("Chưa có vùng OCR")
+        self.ocr_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ocr_preview.setMinimumHeight(160)
+        self.ocr_preview.setStyleSheet(
+            "QLabel { background:#171b22; border:1px solid #3b4350; }"
+        )
+        ocr_layout.addWidget(self.ocr_preview)
+
+        scan_row = QHBoxLayout()
+        self.scan_ocr_button = QPushButton("Quét Region đang chọn")
+        self.scan_ocr_button.clicked.connect(self.scan_current_region)
+        scan_row.addWidget(self.scan_ocr_button)
+        self.ocr_progress = QProgressBar()
+        self.ocr_progress.setRange(0, 0)
+        self.ocr_progress.setVisible(False)
+        scan_row.addWidget(self.ocr_progress)
+        ocr_layout.addLayout(scan_row)
+
+        self.ocr_status = QLabel("Chưa quét.")
+        self.ocr_status.setWordWrap(True)
+        ocr_layout.addWidget(self.ocr_status)
+
+        ocr_layout.addWidget(QLabel("Kết quả OCR gốc — máy trả về"))
+        self.ocr_machine_text = QTextEdit()
+        self.ocr_machine_text.setReadOnly(True)
+        self.ocr_machine_text.setFixedHeight(90)
+        ocr_layout.addWidget(self.ocr_machine_text)
+
+        ocr_layout.addWidget(QLabel("Văn bản đã sửa / xác nhận"))
+        self.ocr_edited_text = QTextEdit()
+        self.ocr_edited_text.setFixedHeight(100)
+        self.ocr_edited_text.textChanged.connect(self._mark_ocr_editor_dirty)
+        ocr_layout.addWidget(self.ocr_edited_text)
+
+        ocr_buttons = QHBoxLayout()
+        save_ocr = QPushButton("Lưu bản đã sửa")
+        save_ocr.clicked.connect(lambda: self.save_ocr_edited(False))
+        review_ocr = QPushButton("Lưu + đánh dấu đã duyệt")
+        review_ocr.clicked.connect(lambda: self.save_ocr_edited(True))
+        use_machine = QPushButton("Dùng lại kết quả máy")
+        use_machine.clicked.connect(self.replace_edited_with_machine)
+        copy_source = QPushButton("Sao chép chữ gốc")
+        copy_source.clicked.connect(self.copy_source_text)
+        ocr_buttons.addWidget(save_ocr)
+        ocr_buttons.addWidget(review_ocr)
+        ocr_buttons.addWidget(use_machine)
+        ocr_buttons.addWidget(copy_source)
+        ocr_layout.addLayout(ocr_buttons)
+
+        right_layout.addWidget(ocr_box)
+
+        patch_box = QGroupBox("3. Nền của Region")
         patch_layout = QVBoxLayout(patch_box)
         patch_note = QLabel(
             "Patch vẫn là layer riêng. Khi Region có nhiều mảng xóa, "
@@ -244,7 +331,7 @@ class MainWindow(QMainWindow):
         patch_layout.addLayout(patch_buttons)
         right_layout.addWidget(patch_box)
 
-        text_box = QGroupBox("3. Nội dung tiếng Việt của Region")
+        text_box = QGroupBox("4. Nội dung tiếng Việt của Region")
         text_layout = QVBoxLayout(text_box)
         self.vn_text = QTextEdit()
         self.vn_text.setPlaceholderText(
@@ -294,7 +381,7 @@ class MainWindow(QMainWindow):
         text_layout.addLayout(text_buttons)
         right_layout.addWidget(text_box)
 
-        layer_box = QGroupBox("4. Layer của trang")
+        layer_box = QGroupBox("5. Layer của trang")
         layer_layout = QVBoxLayout(layer_box)
         layer_note = QLabel(
             "Bỏ dấu ✓ để ẩn patch hoặc chữ. Ảnh gốc luôn khóa."
@@ -325,7 +412,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         self.statusBar().showMessage(
-            "v0.2: Region độc lập, nhiều mảng xóa, chọn hai chiều, tách/gộp chủ động."
+            "v0.3: OCR chạy nền theo Region, giữ riêng kết quả máy và bản đã sửa."
         )
 
     @staticmethod
