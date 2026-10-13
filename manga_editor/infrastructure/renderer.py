@@ -14,6 +14,17 @@ def _rect_from_payload(payload: dict) -> Rect:
     return rect
 
 
+def _patch_parts(payload: dict) -> list[dict]:
+    """Đọc cả payload v0.2 và dạng rect/color cũ của v0.1."""
+    parts = payload.get("parts")
+    if isinstance(parts, list):
+        return list(parts)
+    rect = payload.get("rect")
+    if rect is None:
+        return []
+    return [{"rect": rect, "color": payload.get("color", "#ffffff")}]
+
+
 def render_page(page: Page, raw_bytes: bytes) -> QImage:
     """Dựng preview/ảnh xuất từ raw + các layer, không ghi đè raw."""
     image = QImage.fromData(raw_bytes)
@@ -23,15 +34,17 @@ def render_page(page: Page, raw_bytes: bytes) -> QImage:
 
     painter = QPainter(image)
     try:
-        # V0.1 cố định thứ tự: nền trước, chữ sau. GUIDE không đi vào ảnh thành phẩm.
         for layer in page.layers:
             if not layer.visible or layer.kind != LayerKind.BACKGROUND_PATCH:
                 continue
-            rect = _rect_from_payload(layer.payload)
-            painter.fillRect(
-                QRectF(rect.x, rect.y, rect.width, rect.height),
-                QColor(layer.payload.get("color", "#ffffff")),
-            )
+            for part in _patch_parts(layer.payload):
+                rect = Rect.from_dict(part.get("rect"))
+                if rect is None:
+                    continue
+                painter.fillRect(
+                    QRectF(rect.x, rect.y, rect.width, rect.height),
+                    QColor(part.get("color", "#ffffff")),
+                )
 
         for layer in page.layers:
             if not layer.visible or layer.kind != LayerKind.VIETNAMESE_TEXT:
@@ -48,7 +61,11 @@ def render_page(page: Page, raw_bytes: bytes) -> QImage:
                 "center": Qt.AlignmentFlag.AlignHCenter,
                 "right": Qt.AlignmentFlag.AlignRight,
             }.get(align_name, Qt.AlignmentFlag.AlignHCenter)
-            flags = horizontal | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap
+            flags = (
+                horizontal
+                | Qt.AlignmentFlag.AlignVCenter
+                | Qt.TextFlag.TextWordWrap
+            )
             painter.drawText(
                 QRectF(rect.x, rect.y, rect.width, rect.height),
                 int(flags),
@@ -59,6 +76,8 @@ def render_page(page: Page, raw_bytes: bytes) -> QImage:
     return image
 
 
-def save_rendered_page(page: Page, raw_bytes: bytes, filename: str, quality: int = -1) -> bool:
+def save_rendered_page(
+    page: Page, raw_bytes: bytes, filename: str, quality: int = -1
+) -> bool:
     image = render_page(page, raw_bytes)
     return image.save(filename, quality=quality)
