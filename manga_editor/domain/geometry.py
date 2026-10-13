@@ -28,6 +28,25 @@ class Rect:
     def is_empty(self) -> bool:
         return self.width <= 0 or self.height <= 0
 
+    def contains(self, x: float, y: float) -> bool:
+        return self.x <= x <= self.x + self.width and self.y <= y <= self.y + self.height
+
+    def union(self, other: "Rect") -> "Rect":
+        left = min(self.x, other.x)
+        top = min(self.y, other.y)
+        right = max(self.x + self.width, other.x + other.width)
+        bottom = max(self.y + self.height, other.y + other.height)
+        return Rect(left, top, right - left, bottom - top)
+
+    @classmethod
+    def union_all(cls, rects: list["Rect"]) -> "Rect | None":
+        if not rects:
+            return None
+        result = rects[0]
+        for rect in rects[1:]:
+            result = result.union(rect)
+        return result
+
     def to_dict(self) -> dict:
         return {"x": self.x, "y": self.y, "width": self.width, "height": self.height}
 
