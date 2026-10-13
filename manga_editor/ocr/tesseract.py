@@ -30,8 +30,9 @@ class TesseractEngine:
 
     @staticmethod
     def _resolve_executable(explicit: str | None) -> str:
+        if explicit:
+            return explicit
         candidates = [
-            explicit,
             os.environ.get("TESSERACT_CMD"),
             shutil.which("tesseract"),
             r"C:\Program Files\Tesseract-OCR\tesseract.exe",
