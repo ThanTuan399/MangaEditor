@@ -116,9 +116,21 @@ class ContentRegion:
     name: str
     order: int
     content_type: str = "dialogue"
+
     ocr_area: Rect | None = None
+    ocr_language: str = "ja"
+    ocr_layout: str = "auto"
+    ocr_machine_text: str = ""
+    ocr_edited_text: str = ""
+    ocr_engine: str = ""
+    ocr_warning: str = ""
+    ocr_confidence: float | None = None
+    ocr_input_revision: int = 0
+    ocr_result_revision: int = -1
+
     cleanup_parts: list[Rect] = field(default_factory=list)
     text_frame: Rect | None = None
+
     ocr_state: WorkState = WorkState.NOT_STARTED
     cleanup_state: WorkState = WorkState.NOT_STARTED
     text_state: WorkState = WorkState.NOT_STARTED
@@ -133,9 +145,23 @@ class ContentRegion:
         """Khung bao để hiển thị/tương thích; dữ liệu thật là cleanup_parts."""
         return Rect.union_all(self.cleanup_parts)
 
+    @property
+    def ocr_is_stale(self) -> bool:
+        return (
+            bool(self.ocr_machine_text)
+            and self.ocr_result_revision != self.ocr_input_revision
+        )
+
+    @property
+    def source_text(self) -> str:
+        return self.ocr_edited_text or self.ocr_machine_text
+
     def set_area(self, area_kind: str, rect: Rect | None) -> None:
         if area_kind == "ocr_area":
-            self.ocr_area = rect
+            if self.ocr_area != rect:
+                self.ocr_area = rect
+                self.ocr_input_revision += 1
+                self.ocr_state = WorkState.NOT_STARTED
         elif area_kind == "cleanup_area":
             self.cleanup_parts = [] if rect is None else [rect]
             self.cleanup_state = (
@@ -148,6 +174,42 @@ class ContentRegion:
             )
         else:
             raise ValueError(f"Phạm vi không hợp lệ: {area_kind}")
+        self.revision += 1
+
+    def set_ocr_settings(self, language: str, layout: str) -> None:
+        if layout not in {"auto", "horizontal", "vertical"}:
+            raise ValueError("Bố cục OCR không hợp lệ.")
+        changed = self.ocr_language != language or self.ocr_layout != layout
+        self.ocr_language = language
+        self.ocr_layout = layout
+        if changed:
+            self.ocr_input_revision += 1
+            self.ocr_state = WorkState.NOT_STARTED
+            self.revision += 1
+
+    def apply_ocr_result(
+        self,
+        machine_text: str,
+        engine: str,
+        warning: str = "",
+        confidence: float | None = None,
+        replace_edited: bool = False,
+    ) -> None:
+        self.ocr_machine_text = machine_text
+        self.ocr_engine = engine
+        self.ocr_warning = warning
+        self.ocr_confidence = confidence
+        self.ocr_result_revision = self.ocr_input_revision
+        if replace_edited or not self.ocr_edited_text.strip():
+            self.ocr_edited_text = machine_text
+        self.ocr_state = WorkState.IN_PROGRESS
+        self.revision += 1
+
+    def set_ocr_edited_text(self, text: str, reviewed: bool = False) -> None:
+        self.ocr_edited_text = text
+        self.ocr_state = (
+            WorkState.REVIEWED if reviewed else WorkState.IN_PROGRESS
+        )
         self.revision += 1
 
     def add_cleanup_part(self, rect: Rect) -> int:
@@ -172,6 +234,15 @@ class ContentRegion:
             "order": self.order,
             "content_type": self.content_type,
             "ocr_area": None if self.ocr_area is None else self.ocr_area.to_dict(),
+            "ocr_language": self.ocr_language,
+            "ocr_layout": self.ocr_layout,
+            "ocr_machine_text": self.ocr_machine_text,
+            "ocr_edited_text": self.ocr_edited_text,
+            "ocr_engine": self.ocr_engine,
+            "ocr_warning": self.ocr_warning,
+            "ocr_confidence": self.ocr_confidence,
+            "ocr_input_revision": self.ocr_input_revision,
+            "ocr_result_revision": self.ocr_result_revision,
             "cleanup_parts": [rect.to_dict() for rect in self.cleanup_parts],
             "text_frame": None if self.text_frame is None else self.text_frame.to_dict(),
             "ocr_state": self.ocr_state.value,
@@ -183,26 +254,51 @@ class ContentRegion:
     @classmethod
     def from_dict(cls, data: dict) -> "ContentRegion":
         cleanup_parts = [
-            rect for raw in data.get("cleanup_parts", [])
+            rect
+            for raw in data.get("cleanup_parts", [])
             if (rect := Rect.from_dict(raw)) is not None
         ]
         if not cleanup_parts:
             legacy = Rect.from_dict(data.get("cleanup_area"))
             if legacy is not None:
                 cleanup_parts = [legacy]
+
+        ocr_machine = str(data.get("ocr_machine_text", ""))
+        ocr_edited = str(data.get("ocr_edited_text", ""))
+        input_revision = int(data.get("ocr_input_revision", 0))
+        result_revision = int(
+            data.get(
+                "ocr_result_revision",
+                input_revision if ocr_machine else -1,
+            )
+        )
+
         return cls(
             id=data["id"],
             name=data["name"],
             order=int(data["order"]),
             content_type=data.get("content_type", "dialogue"),
             ocr_area=Rect.from_dict(data.get("ocr_area")),
+            ocr_language=data.get("ocr_language", "ja"),
+            ocr_layout=data.get("ocr_layout", "auto"),
+            ocr_machine_text=ocr_machine,
+            ocr_edited_text=ocr_edited,
+            ocr_engine=str(data.get("ocr_engine", "")),
+            ocr_warning=str(data.get("ocr_warning", "")),
+            ocr_confidence=data.get("ocr_confidence"),
+            ocr_input_revision=input_revision,
+            ocr_result_revision=result_revision,
             cleanup_parts=cleanup_parts,
             text_frame=Rect.from_dict(data.get("text_frame")),
-            ocr_state=WorkState(data.get("ocr_state", WorkState.NOT_STARTED.value)),
+            ocr_state=WorkState(
+                data.get("ocr_state", WorkState.NOT_STARTED.value)
+            ),
             cleanup_state=WorkState(
                 data.get(
                     "cleanup_state",
-                    WorkState.IN_PROGRESS.value if cleanup_parts else WorkState.NOT_STARTED.value,
+                    WorkState.IN_PROGRESS.value
+                    if cleanup_parts
+                    else WorkState.NOT_STARTED.value,
                 )
             ),
             text_state=WorkState(
@@ -226,7 +322,9 @@ class Page:
     width: int
     height: int
     regions: list[ContentRegion] = field(default_factory=list)
-    layers: list[ImageLayer] = field(default_factory=lambda: [ImageLayer.source()])
+    layers: list[ImageLayer] = field(
+        default_factory=lambda: [ImageLayer.source()]
+    )
 
     def region(self, region_id: str) -> ContentRegion:
         for item in self.regions:
@@ -240,7 +338,9 @@ class Page:
                 return item
         raise KeyError(layer_id)
 
-    def layer_for_region(self, region_id: str, kind: LayerKind) -> ImageLayer | None:
+    def layer_for_region(
+        self, region_id: str, kind: LayerKind
+    ) -> ImageLayer | None:
         for item in self.layers:
             if item.region_id == region_id and item.kind == kind:
                 return item
@@ -267,8 +367,14 @@ class Page:
             raw_sha256=data["raw_sha256"],
             width=int(data["width"]),
             height=int(data["height"]),
-            regions=[ContentRegion.from_dict(x) for x in data.get("regions", [])],
-            layers=[ImageLayer.from_dict(x) for x in data.get("layers", [])]
+            regions=[
+                ContentRegion.from_dict(x)
+                for x in data.get("regions", [])
+            ],
+            layers=[
+                ImageLayer.from_dict(x)
+                for x in data.get("layers", [])
+            ]
             or [ImageLayer.source()],
         )
 
@@ -296,7 +402,10 @@ class MangaProject:
 
     @classmethod
     def create(cls, name: str) -> "MangaProject":
-        return cls(new_id("project"), name.strip() or "Dự án chưa đặt tên")
+        return cls(
+            new_id("project"),
+            name.strip() or "Dự án chưa đặt tên",
+        )
 
     def page(self, page_id: str) -> Page:
         for item in self.pages:
@@ -318,12 +427,18 @@ class MangaProject:
         version = int(data.get("format_version", 0))
         if version != PROJECT_FORMAT_VERSION:
             raise ValueError(
-                f"Định dạng dự án {version} chưa được hỗ trợ; bản hiện tại là {PROJECT_FORMAT_VERSION}."
+                f"Định dạng dự án {version} chưa được hỗ trợ; "
+                f"bản hiện tại là {PROJECT_FORMAT_VERSION}."
             )
         return cls(
             id=data["id"],
             name=data["name"],
-            pages=[Page.from_dict(x) for x in data.get("pages", [])],
-            settings=ProjectSettings.from_dict(data.get("settings")),
+            pages=[
+                Page.from_dict(x)
+                for x in data.get("pages", [])
+            ],
+            settings=ProjectSettings.from_dict(
+                data.get("settings")
+            ),
             format_version=version,
         )
