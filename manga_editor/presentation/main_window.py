@@ -823,6 +823,302 @@ class MainWindow(QMainWindow):
             return
         self._switch_region(new_id, ask_editor=False)
 
+    def _ocr_settings_changed(self) -> None:
+        if (
+            self._syncing_ui
+            or self.current_page_id is None
+            or self.current_region_id is None
+        ):
+            return
+        self.session.set_ocr_settings(
+            self.current_page_id,
+            self.current_region_id,
+            self.ocr_language.currentData(),
+            self.ocr_layout.currentData(),
+        )
+        self._refresh_region_form()
+        self._load_ocr_editor()
+
+    def scan_current_region(self) -> None:
+        page = self._current_page()
+        region = self._current_region()
+        if page is None or region is None:
+            self._error("Chưa chọn Region", "Chọn Region trước khi OCR.")
+            return
+        if self.ocr_task is not None and self.ocr_task.isRunning():
+            self._error("OCR đang chạy", "Chờ tác vụ OCR hiện tại hoàn thành.")
+            return
+        if region.ocr_area is None:
+            self._error(
+                "Chưa có vùng OCR",
+                "Chọn 'Vùng đọc OCR' rồi kéo khung trên ảnh trước.",
+            )
+            return
+        if not self._confirm_ocr_editor_changes():
+            return
+
+        self.session.set_ocr_settings(
+            page.id,
+            region.id,
+            self.ocr_language.currentData(),
+            self.ocr_layout.currentData(),
+        )
+        region = page.region(region.id)
+
+        try:
+            crop = crop_raw_to_png(
+                self.session.assets[page.raw_asset],
+                region.ocr_area,
+            )
+        except Exception as exc:
+            self._error("Không cắt được ảnh OCR", str(exc))
+            return
+
+        request = OcrRequest(
+            image_bytes=crop.png_bytes,
+            language=region.ocr_language,
+            layout=region.ocr_layout,
+        )
+        target = OcrTarget(
+            page_id=page.id,
+            region_id=region.id,
+            input_revision=region.ocr_input_revision,
+        )
+
+        task = OcrTask(self.ocr_engine, request, target)
+        task.progress.connect(self._ocr_progress_message)
+        task.completed.connect(self._ocr_completed)
+        task.failed.connect(self._ocr_failed)
+        task.finished.connect(self._ocr_thread_finished)
+        self.ocr_task = task
+        self._set_ocr_busy(True)
+        self.ocr_status.setText(
+            f"Đang quét {region.name} bằng Tesseract…"
+        )
+        task.start()
+
+    def _ocr_progress_message(self, message: str) -> None:
+        self.ocr_status.setText(message)
+        self.statusBar().showMessage(message)
+
+    def _ocr_completed(self, target: OcrTarget, result) -> None:
+        accepted = self.session.apply_ocr_result(
+            page_id=target.page_id,
+            region_id=target.region_id,
+            expected_input_revision=target.input_revision,
+            machine_text=result.text,
+            engine=result.engine,
+            warning=result.warning,
+            confidence=result.confidence,
+            replace_edited=False,
+        )
+        if not accepted:
+            self.statusBar().showMessage(
+                "Đã bỏ kết quả OCR cũ vì Region bị xóa hoặc cấu hình OCR đã đổi."
+            )
+            return
+
+        try:
+            page = self.session.project.page(target.page_id)
+            name = page.region(target.region_id).name
+        except KeyError:
+            name = target.region_id
+
+        self.statusBar().showMessage(
+            f"OCR xong cho {name}. Kết quả máy đã lưu riêng."
+        )
+        if (
+            self.current_page_id == target.page_id
+            and self.current_region_id == target.region_id
+        ):
+            self._refresh_region_form()
+            self._load_ocr_editor()
+            self._refresh_contents()
+
+    def _ocr_failed(self, target: OcrTarget, message: str) -> None:
+        self.statusBar().showMessage(
+            f"OCR thất bại cho {target.region_id}: {message}"
+        )
+        if (
+            self.current_page_id == target.page_id
+            and self.current_region_id == target.region_id
+        ):
+            self.ocr_status.setText(f"Lỗi OCR: {message}")
+        QMessageBox.warning(self, "OCR chưa thành công", message)
+
+    def _ocr_thread_finished(self) -> None:
+        task = self.ocr_task
+        self.ocr_task = None
+        self._set_ocr_busy(False)
+        if task is not None:
+            task.deleteLater()
+
+    def _set_ocr_busy(self, busy: bool) -> None:
+        self.scan_ocr_button.setEnabled(not busy)
+        self.ocr_progress.setVisible(busy)
+
+    def save_ocr_edited(self, reviewed: bool = False) -> None:
+        if self.current_region_id is None:
+            return
+        if self._save_ocr_editor_to_region(
+            self.current_region_id, reviewed=reviewed
+        ):
+            self._refresh_region_form()
+            self._refresh_contents()
+            self._load_ocr_editor()
+
+    def _save_ocr_editor_to_region(
+        self, region_id: str, reviewed: bool = False
+    ) -> bool:
+        if self.current_page_id is None:
+            return False
+        try:
+            self.session.set_ocr_edited_text(
+                self.current_page_id,
+                region_id,
+                self.ocr_edited_text.toPlainText(),
+                reviewed=reviewed,
+            )
+        except Exception as exc:
+            self._error("Không lưu được chữ OCR", str(exc))
+            return False
+        self.ocr_editor_region_id = region_id
+        self.ocr_editor_dirty = False
+        return True
+
+    def replace_edited_with_machine(self) -> None:
+        region = self._current_region()
+        if region is None or not region.ocr_machine_text:
+            self._error(
+                "Chưa có kết quả máy",
+                "Quét OCR Region này trước.",
+            )
+            return
+        if (
+            region.ocr_edited_text.strip()
+            and region.ocr_edited_text != region.ocr_machine_text
+        ):
+            answer = QMessageBox.question(
+                self,
+                "Thay bản đã sửa?",
+                "Thao tác này sẽ thay văn bản đã sửa bằng kết quả OCR máy. Tiếp tục?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        self.ocr_edited_text.setPlainText(region.ocr_machine_text)
+        self.ocr_editor_dirty = True
+        self.save_ocr_edited(False)
+
+    def copy_source_text(self) -> None:
+        region = self._current_region()
+        if region is None:
+            return
+        text = region.source_text
+        if not text:
+            self._error(
+                "Chưa có chữ gốc",
+                "Region này chưa có kết quả OCR hoặc văn bản đã sửa.",
+            )
+            return
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(
+            f"Đã sao chép chữ gốc của {region.name}."
+        )
+
+    def _mark_ocr_editor_dirty(self) -> None:
+        if self._syncing_ui or self.current_region_id is None:
+            return
+        self.ocr_editor_dirty = True
+
+    def _load_ocr_editor(self) -> None:
+        page = self._current_page()
+        region = self._current_region()
+
+        self._syncing_ui = True
+        try:
+            self.ocr_engine_label.setText(
+                "Tesseract · sẵn sàng"
+                if self.ocr_engine.is_available()
+                else "Tesseract · chưa tìm thấy trong PATH"
+            )
+
+            if page is None or region is None:
+                self.ocr_machine_text.clear()
+                if not self.ocr_editor_dirty:
+                    self.ocr_edited_text.clear()
+                self.ocr_preview.clear()
+                self.ocr_preview.setText("Chưa chọn Region")
+                self.ocr_status.setText("Chưa quét.")
+                self.ocr_editor_region_id = None
+                return
+
+            language_index = self.ocr_language.findData(
+                region.ocr_language
+            )
+            self.ocr_language.setCurrentIndex(max(0, language_index))
+            layout_index = self.ocr_layout.findData(
+                region.ocr_layout
+            )
+            self.ocr_layout.setCurrentIndex(max(0, layout_index))
+
+            self.ocr_machine_text.setPlainText(
+                region.ocr_machine_text
+            )
+            if not (
+                self.ocr_editor_dirty
+                and self.ocr_editor_region_id == region.id
+            ):
+                self.ocr_edited_text.setPlainText(
+                    region.ocr_edited_text
+                )
+                self.ocr_editor_region_id = region.id
+                self.ocr_editor_dirty = False
+
+            status_parts = [
+                f"Trạng thái: {STATE_LABELS[region.ocr_state]}"
+            ]
+            if region.ocr_engine:
+                status_parts.append(f"Engine: {region.ocr_engine}")
+            if region.ocr_confidence is not None:
+                status_parts.append(
+                    f"Độ tin cậy tham khảo: {region.ocr_confidence:.0%}"
+                )
+            if region.ocr_is_stale:
+                status_parts.append(
+                    "Kết quả cũ: vùng/ngôn ngữ/bố cục đã thay đổi, nên quét lại."
+                )
+            if region.ocr_warning:
+                status_parts.append(region.ocr_warning)
+            self.ocr_status.setText("\n".join(status_parts))
+
+            if region.ocr_area is None:
+                self.ocr_preview.clear()
+                self.ocr_preview.setText("Chưa có vùng OCR")
+            else:
+                try:
+                    crop = crop_raw_to_png(
+                        self.session.assets[page.raw_asset],
+                        region.ocr_area,
+                    )
+                    pixmap = QPixmap.fromImage(crop.image).scaled(
+                        380,
+                        220,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    self.ocr_preview.setPixmap(pixmap)
+                except Exception as exc:
+                    self.ocr_preview.clear()
+                    self.ocr_preview.setText(
+                        f"Không hiển thị được ảnh cắt: {exc}"
+                    )
+        finally:
+            self._syncing_ui = False
+
     def apply_white_patch(self) -> None:
         self._apply_patch("#ffffff")
 
