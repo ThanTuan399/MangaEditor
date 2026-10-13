@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 
 from manga_editor.domain.models import MangaProject
+from manga_editor.infrastructure.migrations import migrate_manifest
 
 
 class ProjectStore:
@@ -44,6 +45,7 @@ class ProjectStore:
                 manifest = json.loads(archive.read(cls.MANIFEST).decode("utf-8"))
             except KeyError as exc:
                 raise ValueError("Dự án thiếu project.json.") from exc
+            manifest = migrate_manifest(manifest)
             project = MangaProject.from_dict(manifest)
             assets: dict[str, bytes] = {}
             for page in project.pages:
