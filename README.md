@@ -1,33 +1,46 @@
-# MangaEditor — V0 Foundation
+# MangaEditor — v0.1
 
-MangaEditor V0 là bản dựng lại từ đầu theo nguyên tắc **vùng nội dung là đơn vị trung tâm**. Mục tiêu của V0 không phải OCR hay Việt hóa hoàn chỉnh, mà là tạo nền dữ liệu và kiến trúc đủ chắc để các phiên bản sau mở rộng mà không phải thay mô hình cốt lõi.
+MangaEditor đang được dựng lại theo hướng **Region là đơn vị trung tâm, raw không bị phá và mọi chỉnh sửa nằm trên layer độc lập**.
 
-## V0 làm được gì
+## Trạng thái hiện tại
 
-- Tạo dự án mới.
-- Nhập ảnh raw làm trang truyện.
-- Mỗi trang có ID cố định, ảnh gốc được giữ nguyên trong dự án.
-- Tạo nhiều vùng nội dung; mỗi vùng có ID cố định không phụ thuộc tên, màu hay thứ tự.
-- Mỗi vùng giữ riêng ba phạm vi:
-  - vùng đọc OCR;
-  - vùng/mặt nạ xóa chữ;
-  - khung đặt chữ Việt.
-- Phóng to, thu nhỏ và di chuyển ảnh mà dữ liệu vùng vẫn lưu theo tọa độ ảnh gốc.
-- Lưu/mở dự án `.mep` mà không mất ID, phạm vi hay ảnh raw.
-- Hoàn tác/làm lại các thay đổi dữ liệu chính.
-- Phân tách rõ domain, application, infrastructure và presentation.
+### V0 Foundation
 
-## V0 cố ý chưa làm
+- Project / Page / Region có ID cố định.
+- Ba phạm vi độc lập: OCR, xóa chữ, khung chữ Việt.
+- Tọa độ theo ảnh gốc.
+- Lưu/mở `.mep` có `format_version`.
+- Undo/redo qua `ProjectSession`.
+- Raw được nhúng nguyên byte và kiểm tra SHA-256.
+
+### v0.1 — Một trang đơn giản
+
+- Nhập ảnh raw.
+- Tạo Region.
+- Vẽ phạm vi xóa chữ và khung chữ Việt.
+- Tạo bản vá nền trắng hoặc màu phẳng trên layer riêng.
+- Nhập chữ Việt và chỉnh:
+  - phông;
+  - cỡ chữ;
+  - căn trái/giữa/phải;
+  - màu chữ;
+  - vị trí/kích thước bằng `text_frame`.
+- Ẩn/hiện patch và text layer.
+- Chữ vẫn chỉnh được sau khi lưu/mở lại.
+- Xuất PNG/JPEG từ raw + layer, giữ kích thước ảnh gốc.
+- Hoàn tác/làm lại các thao tác dữ liệu chính.
+
+## Chưa có ở v0.1
 
 - OCR.
 - Dịch tự động.
-- Nhận diện bong bóng tự động.
-- Xóa chữ/phục hồi nền thật sự.
-- Render chữ Việt lên ảnh.
-- Xuất ảnh hoàn chỉnh.
-- Xử lý hàng loạt nhiều trang.
+- Tự nhận diện bong bóng.
+- Cọ mask tự do.
+- Inpainting/phục hồi tranh phức tạp.
+- Chữ hiệu ứng.
+- Xử lý hàng loạt.
 
-Các chức năng đó sẽ được thêm ở các mốc sau nhưng dùng lại cùng Project/Page/Region đã có.
+Các phần này sẽ được thêm theo từng mốc mà không thay lại Project/Page/Region.
 
 ## Chạy ứng dụng
 
@@ -38,36 +51,26 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-## Kiểm tra phần lõi
+## Test
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-Các test lõi không cần khởi động giao diện.
+Repo cũng có GitHub Actions để chạy `compileall` và unit test trên mỗi push.
 
-## Định dạng dự án
-
-`.mep` là một tệp ZIP có phiên bản, gồm:
-
-```text
-project.json
-assets/
-  pages/
-    <page-id>/original.<ext>
-```
-
-Ảnh raw được lưu như tài sản bất biến. Giao diện chỉ đọc ảnh raw để hiển thị; V0 không ghi đè lên ảnh này.
-
-## Cấu trúc mã nguồn
+## Cấu trúc
 
 ```text
 main.py
 manga_editor/
-  domain/          # dữ liệu và quy tắc thuần Python
-  application/     # điều phối thao tác + undo/redo
-  infrastructure/  # đọc ảnh, lưu/mở dự án
-  presentation/    # PySide6 UI, canvas
+  domain/          # dữ liệu và quy tắc
+  application/     # điều phối + undo/redo
+  infrastructure/  # ảnh, lưu/mở, renderer
+  presentation/    # PySide6 UI/canvas
+tests/
+docs/
 ```
 
-Chi tiết thiết kế nằm trong `docs/V0_FOUNDATION.md`.
+- Nền kiến trúc: `docs/V0_FOUNDATION.md`
+- Quy trình v0.1: `docs/V0_1.md`
