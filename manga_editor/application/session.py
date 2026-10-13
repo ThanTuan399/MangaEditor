@@ -136,8 +136,6 @@ class ProjectSession:
                 )
                 if text_layer is not None:
                     text_layer.payload["rect"] = safe.to_dict()
-            elif area_kind == "ocr_area":
-                region.ocr_state = WorkState.IN_PROGRESS
 
         self.transact("Cập nhật phạm vi vùng", mutate)
 
@@ -273,6 +271,28 @@ class ProjectSession:
             if target.text_frame is None:
                 target.text_frame = source.text_frame
 
+            # Gộp OCR là thao tác chủ động: giữ cả dữ liệu nguồn để không mất chữ,
+            # nhưng đánh dấu stale vì phạm vi OCR đã thay đổi.
+            if source.ocr_machine_text.strip():
+                left = target.ocr_machine_text.rstrip()
+                right = source.ocr_machine_text.lstrip()
+                target.ocr_machine_text = (
+                    f"{left}\n{right}" if left and right else left or right
+                )
+            if source.ocr_edited_text.strip():
+                left = target.ocr_edited_text.rstrip()
+                right = source.ocr_edited_text.lstrip()
+                target.ocr_edited_text = (
+                    f"{left}\n{right}" if left and right else left or right
+                )
+            target.ocr_warning = "Region đã được gộp; nên quét OCR lại."
+            target.ocr_input_revision += 1
+            target.ocr_state = (
+                WorkState.IN_PROGRESS
+                if target.ocr_machine_text or target.ocr_edited_text
+                else WorkState.NOT_STARTED
+            )
+
             self._merge_patch_layers(
                 page, target, source, target_patch, source_patch
             )
@@ -310,6 +330,74 @@ class ProjectSession:
 
         self.transact("Gộp vùng", mutate)
         return target_region_id
+
+    def set_ocr_settings(
+        self,
+        page_id: str,
+        region_id: str,
+        language: str,
+        layout: str,
+    ) -> int:
+        page = self.project.page(page_id)
+        region = page.region(region_id)
+        if region.ocr_language == language and region.ocr_layout == layout:
+            return region.ocr_input_revision
+
+        self.transact(
+            "Cập nhật thiết lập OCR",
+            lambda: region.set_ocr_settings(language, layout),
+        )
+        return region.ocr_input_revision
+
+    def apply_ocr_result(
+        self,
+        page_id: str,
+        region_id: str,
+        expected_input_revision: int,
+        machine_text: str,
+        engine: str,
+        warning: str = "",
+        confidence: float | None = None,
+        replace_edited: bool = False,
+    ) -> bool:
+        """
+        Chỉ nhận kết quả nếu Region còn tồn tại và input OCR chưa thay đổi.
+        Vì vậy task nền không thể ghi kết quả cũ vào cấu hình mới.
+        """
+        try:
+            page = self.project.page(page_id)
+            region = page.region(region_id)
+        except KeyError:
+            return False
+
+        if region.ocr_input_revision != expected_input_revision:
+            return False
+
+        self.transact(
+            "Nhận kết quả OCR",
+            lambda: region.apply_ocr_result(
+                machine_text=machine_text,
+                engine=engine,
+                warning=warning,
+                confidence=confidence,
+                replace_edited=replace_edited,
+            ),
+        )
+        return True
+
+    def set_ocr_edited_text(
+        self,
+        page_id: str,
+        region_id: str,
+        text: str,
+        reviewed: bool = False,
+    ) -> None:
+        page = self.project.page(page_id)
+        region = page.region(region_id)
+        self.transact(
+            "Sửa chữ OCR",
+            lambda: region.set_ocr_edited_text(text, reviewed),
+        )
 
     def set_region_state(
         self,
