@@ -48,6 +48,18 @@ class ProjectStoreTests(unittest.TestCase):
             page_id, region_id, "cleanup",
             WorkState.REVIEWED,
         )
+        region = session.project.page(page_id).region(region_id)
+        session.apply_ocr_result(
+            page_id,
+            region_id,
+            region.ocr_input_revision,
+            "機械 OCR",
+            "fake",
+            confidence=0.88,
+        )
+        session.set_ocr_edited_text(
+            page_id, region_id, "OCR đã sửa", reviewed=True
+        )
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "project.mep"
@@ -75,6 +87,10 @@ class ProjectStoreTests(unittest.TestCase):
         self.assertEqual(
             region.cleanup_state, WorkState.REVIEWED
         )
+        self.assertEqual(region.ocr_machine_text, "機械 OCR")
+        self.assertEqual(region.ocr_edited_text, "OCR đã sửa")
+        self.assertEqual(region.ocr_state, WorkState.REVIEWED)
+        self.assertEqual(region.ocr_confidence, 0.88)
 
         patch = page.layer_for_region(
             region_id, LayerKind.BACKGROUND_PATCH
@@ -116,9 +132,9 @@ class ProjectStoreTests(unittest.TestCase):
                 manifest = json.loads(
                     archive.read("project.json")
                 )
-        self.assertEqual(manifest["format_version"], 2)
+        self.assertEqual(manifest["format_version"], 3)
 
-    def test_v1_project_is_migrated_to_v2(self):
+    def test_v1_project_is_migrated_to_v3(self):
         raw = b"legacy-raw"
         digest = hashlib.sha256(raw).hexdigest()
         manifest = {
@@ -206,7 +222,7 @@ class ProjectStoreTests(unittest.TestCase):
 
             loaded, _ = ProjectStore.load(path)
 
-        self.assertEqual(loaded.format_version, 2)
+        self.assertEqual(loaded.format_version, 3)
         region = loaded.page("page_old").region(
             "region_old"
         )
