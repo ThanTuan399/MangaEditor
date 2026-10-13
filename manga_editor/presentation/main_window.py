@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
+    QColorDialog,
+    QComboBox,
     QFileDialog,
+    QFontComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -13,35 +16,42 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QSplitter,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
-    QComboBox,
 )
 
 from manga_editor import APP_VERSION
 from manga_editor.application.session import ProjectSession
 from manga_editor.domain.geometry import Rect
+from manga_editor.domain.models import LayerKind
 from manga_editor.infrastructure.image_io import load_raw_image
 from manga_editor.infrastructure.project_store import ProjectStore
+from manga_editor.infrastructure.renderer import render_page, save_rendered_page
 from .canvas import CanvasView
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"MangaEditor V0 — {APP_VERSION}")
-        self.resize(1400, 900)
+        self.setWindowTitle(f"MangaEditor v0.1 — {APP_VERSION}")
+        self.resize(1500, 920)
         self.session = ProjectSession()
         self.project_path: Path | None = None
         self.current_page_id: str | None = None
         self.current_region_id: str | None = None
+        self.text_color = "#000000"
+
         self.canvas = CanvasView()
         self.canvas.areaDrawn.connect(self._area_drawn)
         self.canvas.regionSelected.connect(self._select_region_by_id)
+
         self._build_ui()
         self._refresh_all()
 
@@ -53,6 +63,7 @@ class MainWindow(QMainWindow):
             ("Mở dự án", "Ctrl+O", self.open_project),
             ("Lưu dự án", "Ctrl+S", self.save_project),
             ("Nhập trang raw", "Ctrl+I", self.import_page),
+            ("Xuất ảnh", "Ctrl+Shift+S", self.export_image),
             ("Hoàn tác", "Ctrl+Z", self.undo),
             ("Làm lại", "Ctrl+Y", self.redo),
             ("Vừa trang", "Ctrl+0", self.canvas.fit_page),
@@ -76,29 +87,32 @@ class MainWindow(QMainWindow):
         right = QWidget()
         right_layout = QVBoxLayout(right)
 
-        project_box = QGroupBox("V0 Foundation")
+        project_box = QGroupBox("v0.1 — Một trang đơn giản")
         project_layout = QVBoxLayout(project_box)
         self.project_name = QLabel()
         project_layout.addWidget(self.project_name)
         note = QLabel(
-            "V0 chỉ quản lý Project / Page / Region và ba phạm vi độc lập. "
-            "Chưa có OCR, xóa nền thật hay dàn chữ."
+            "Quy trình: nhập raw → tạo vùng → đặt phạm vi xóa/chữ → "
+            "tạo bản vá nền → nhập chữ Việt → lưu hoặc xuất ảnh. "
+            "OCR chưa có ở v0.1."
         )
         note.setWordWrap(True)
         project_layout.addWidget(note)
         right_layout.addWidget(project_box)
 
-        region_box = QGroupBox("Vùng nội dung")
+        region_box = QGroupBox("1. Vùng nội dung")
         region_layout = QVBoxLayout(region_box)
-        buttons = QHBoxLayout()
+        region_buttons = QHBoxLayout()
         add_region = QPushButton("Tạo vùng mới")
         add_region.clicked.connect(self.add_region)
         delete_region = QPushButton("Xóa vùng")
         delete_region.clicked.connect(self.delete_region)
-        buttons.addWidget(add_region)
-        buttons.addWidget(delete_region)
-        region_layout.addLayout(buttons)
+        region_buttons.addWidget(add_region)
+        region_buttons.addWidget(delete_region)
+        region_layout.addLayout(region_buttons)
+
         self.regions = QListWidget()
+        self.regions.setMaximumHeight(125)
         self.regions.currentRowChanged.connect(self._region_changed)
         region_layout.addWidget(self.regions)
 
@@ -106,15 +120,18 @@ class MainWindow(QMainWindow):
         self.region_id = QLabel("—")
         self.region_id.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         form.addRow("ID cố định", self.region_id)
+
         self.region_name = QLineEdit()
         self.region_name.editingFinished.connect(self.rename_region)
         form.addRow("Tên hiển thị", self.region_name)
+
         self.area_combo = QComboBox()
-        self.area_combo.addItem("Vùng đọc OCR", "ocr_area")
         self.area_combo.addItem("Phạm vi xóa chữ", "cleanup_area")
         self.area_combo.addItem("Khung đặt chữ Việt", "text_frame")
+        self.area_combo.addItem("Vùng đọc OCR (để dành)", "ocr_area")
         form.addRow("Phạm vi", self.area_combo)
         region_layout.addLayout(form)
+
         draw_button = QPushButton("Vẽ / cập nhật phạm vi trên ảnh")
         draw_button.clicked.connect(self.begin_draw_area)
         region_layout.addWidget(draw_button)
@@ -129,21 +146,92 @@ class MainWindow(QMainWindow):
         region_layout.addLayout(rect_form)
         right_layout.addWidget(region_box)
 
-        layer_box = QGroupBox("Layer của trang")
+        patch_box = QGroupBox("2. Làm sạch nền cơ bản")
+        patch_layout = QVBoxLayout(patch_box)
+        patch_note = QLabel(
+            "v0.1 chỉ tạo bản vá màu phẳng trên layer riêng. "
+            "Không sửa trực tiếp ảnh raw."
+        )
+        patch_note.setWordWrap(True)
+        patch_layout.addWidget(patch_note)
+
+        patch_buttons = QHBoxLayout()
+        white_button = QPushButton("Tô trắng vùng xóa")
+        white_button.clicked.connect(self.apply_white_patch)
+        color_button = QPushButton("Chọn màu nền")
+        color_button.clicked.connect(self.apply_color_patch)
+        remove_patch = QPushButton("Bỏ bản vá")
+        remove_patch.clicked.connect(self.remove_patch)
+        patch_buttons.addWidget(white_button)
+        patch_buttons.addWidget(color_button)
+        patch_buttons.addWidget(remove_patch)
+        patch_layout.addLayout(patch_buttons)
+        right_layout.addWidget(patch_box)
+
+        text_box = QGroupBox("3. Chữ Việt")
+        text_layout = QVBoxLayout(text_box)
+        self.vn_text = QTextEdit()
+        self.vn_text.setPlaceholderText("Nhập nội dung tiếng Việt cho vùng đang chọn…")
+        self.vn_text.setFixedHeight(105)
+        text_layout.addWidget(self.vn_text)
+
+        text_form = QFormLayout()
+        self.font_family = QFontComboBox()
+        text_form.addRow("Phông", self.font_family)
+
+        self.font_size = QSpinBox()
+        self.font_size.setRange(6, 300)
+        self.font_size.setValue(32)
+        self.font_size.setSuffix(" px")
+        text_form.addRow("Cỡ chữ", self.font_size)
+
+        self.text_align = QComboBox()
+        self.text_align.addItem("Căn trái", "left")
+        self.text_align.addItem("Căn giữa", "center")
+        self.text_align.addItem("Căn phải", "right")
+        self.text_align.setCurrentIndex(1)
+        text_form.addRow("Căn chữ", self.text_align)
+        text_layout.addLayout(text_form)
+
+        text_buttons = QHBoxLayout()
+        apply_text = QPushButton("Áp dụng / cập nhật chữ")
+        apply_text.clicked.connect(self.apply_vietnamese_text)
+        text_color_button = QPushButton("Màu chữ")
+        text_color_button.clicked.connect(self.choose_text_color)
+        remove_text = QPushButton("Bỏ lớp chữ")
+        remove_text.clicked.connect(self.remove_text_layer)
+        text_buttons.addWidget(apply_text)
+        text_buttons.addWidget(text_color_button)
+        text_buttons.addWidget(remove_text)
+        text_layout.addLayout(text_buttons)
+        right_layout.addWidget(text_box)
+
+        layer_box = QGroupBox("4. Layer của trang")
         layer_layout = QVBoxLayout(layer_box)
+        layer_note = QLabel("Bỏ dấu ✓ để ẩn bản vá hoặc chữ; ảnh gốc luôn được khóa.")
+        layer_note.setWordWrap(True)
+        layer_layout.addWidget(layer_note)
         self.layers = QListWidget()
+        self.layers.setMaximumHeight(135)
+        self.layers.itemChanged.connect(self._layer_visibility_changed)
         layer_layout.addWidget(self.layers)
         right_layout.addWidget(layer_box)
+
+        export_button = QPushButton("Xuất ảnh hoàn chỉnh")
+        export_button.clicked.connect(self.export_image)
+        right_layout.addWidget(export_button)
         right_layout.addStretch(1)
-        right.setMinimumWidth(340)
+        right.setMinimumWidth(390)
 
         splitter = QSplitter()
         splitter.addWidget(left)
         splitter.addWidget(self.canvas)
         splitter.addWidget(right)
-        splitter.setSizes([220, 850, 360])
+        splitter.setSizes([220, 860, 400])
         self.setCentralWidget(splitter)
-        self.statusBar().showMessage("V0: tạo dự án, nhập raw, tạo vùng và kiểm tra save/load.")
+        self.statusBar().showMessage(
+            "v0.1: làm trọn một trang đơn giản, không phá ảnh raw."
+        )
 
     def new_project(self) -> None:
         if not self._confirm_discard():
@@ -214,6 +302,30 @@ class MainWindow(QMainWindow):
         self._refresh_all(select_page_id=self.current_page_id)
         self.canvas.fit_page()
 
+    def export_image(self) -> None:
+        page = self._current_page()
+        if page is None:
+            self._error("Chưa có trang", "Chọn hoặc nhập một trang trước khi xuất.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Xuất ảnh hoàn chỉnh",
+            f"{Path(page.name).stem}-vi.png",
+            "PNG (*.png);;JPEG (*.jpg *.jpeg)",
+        )
+        if not path:
+            return
+        try:
+            raw = self.session.assets[page.raw_asset]
+            if not save_rendered_page(page, raw, path):
+                raise ValueError("Qt không ghi được ảnh đầu ra.")
+        except Exception as exc:
+            self._error("Không xuất được ảnh", str(exc))
+            return
+        self.statusBar().showMessage(
+            f"Đã xuất {path} đúng kích thước {page.width}×{page.height}."
+        )
+
     def add_region(self) -> None:
         if self.current_page_id is None:
             self._error("Chưa có trang", "Nhập một ảnh raw trước.")
@@ -248,7 +360,7 @@ class MainWindow(QMainWindow):
             return
         self.canvas.set_draw_mode(self.area_combo.currentData())
         self.statusBar().showMessage(
-            "Kéo chuột trên ảnh để đặt phạm vi. Tọa độ được lưu theo ảnh gốc."
+            "Kéo chuột trên ảnh để đặt phạm vi. Zoom không làm đổi tọa độ lưu."
         )
 
     def _area_drawn(self, area_kind: str, rect: Rect) -> None:
@@ -265,6 +377,103 @@ class MainWindow(QMainWindow):
             select_page_id=self.current_page_id,
             select_region_id=self.current_region_id,
         )
+
+    def apply_white_patch(self) -> None:
+        self._apply_patch("#ffffff")
+
+    def apply_color_patch(self) -> None:
+        color = QColorDialog.getColor(QColor("#ffffff"), self, "Chọn màu nền")
+        if color.isValid():
+            self._apply_patch(color.name())
+
+    def _apply_patch(self, color: str) -> None:
+        if self.current_page_id is None or self.current_region_id is None:
+            self._error("Chưa chọn vùng", "Chọn vùng trước khi tạo bản vá.")
+            return
+        try:
+            self.session.set_background_patch(
+                self.current_page_id, self.current_region_id, color
+            )
+        except Exception as exc:
+            self._error("Không tạo được bản vá", str(exc))
+            return
+        self._refresh_all(
+            select_page_id=self.current_page_id,
+            select_region_id=self.current_region_id,
+        )
+
+    def remove_patch(self) -> None:
+        if self.current_page_id is None or self.current_region_id is None:
+            return
+        self.session.remove_region_layer(
+            self.current_page_id,
+            self.current_region_id,
+            LayerKind.BACKGROUND_PATCH,
+        )
+        self._refresh_all(
+            select_page_id=self.current_page_id,
+            select_region_id=self.current_region_id,
+        )
+
+    def choose_text_color(self) -> None:
+        color = QColorDialog.getColor(QColor(self.text_color), self, "Chọn màu chữ")
+        if color.isValid():
+            self.text_color = color.name()
+            self.statusBar().showMessage(f"Màu chữ hiện tại: {self.text_color}")
+
+    def apply_vietnamese_text(self) -> None:
+        if self.current_page_id is None or self.current_region_id is None:
+            self._error("Chưa chọn vùng", "Chọn vùng trước khi tạo chữ Việt.")
+            return
+        try:
+            self.session.set_vietnamese_text(
+                page_id=self.current_page_id,
+                region_id=self.current_region_id,
+                content=self.vn_text.toPlainText(),
+                family=self.font_family.currentFont().family(),
+                size=self.font_size.value(),
+                align=self.text_align.currentData(),
+                color=self.text_color,
+            )
+        except Exception as exc:
+            self._error("Không tạo được chữ Việt", str(exc))
+            return
+        self._refresh_all(
+            select_page_id=self.current_page_id,
+            select_region_id=self.current_region_id,
+        )
+
+    def remove_text_layer(self) -> None:
+        if self.current_page_id is None or self.current_region_id is None:
+            return
+        self.session.remove_region_layer(
+            self.current_page_id,
+            self.current_region_id,
+            LayerKind.VIETNAMESE_TEXT,
+        )
+        self._refresh_all(
+            select_page_id=self.current_page_id,
+            select_region_id=self.current_region_id,
+        )
+
+    def _layer_visibility_changed(self, item: QListWidgetItem) -> None:
+        if self.current_page_id is None:
+            return
+        layer_id = item.data(Qt.ItemDataRole.UserRole)
+        if not layer_id:
+            return
+        page = self._current_page()
+        if page is None:
+            return
+        try:
+            layer = page.layer(layer_id)
+        except KeyError:
+            return
+        if layer.kind == LayerKind.SOURCE:
+            return
+        visible = item.checkState() == Qt.CheckState.Checked
+        self.session.set_layer_visibility(self.current_page_id, layer_id, visible)
+        self._refresh_canvas()
 
     def undo(self) -> None:
         if self.session.undo():
@@ -292,8 +501,7 @@ class MainWindow(QMainWindow):
             return
         if self.current_page_id is not None and self.current_region_id is not None:
             region_ids = {
-                r.id
-                for r in self.session.project.page(self.current_page_id).regions
+                r.id for r in self.session.project.page(self.current_page_id).regions
             }
             if self.current_region_id not in region_ids:
                 self.current_region_id = None
@@ -315,6 +523,7 @@ class MainWindow(QMainWindow):
             ordered = sorted(page.regions, key=lambda x: x.order)
             self.current_region_id = ordered[row].id
         self._refresh_region_form()
+        self._load_region_layers_into_editor()
         self._refresh_canvas()
 
     def _select_region_by_id(self, region_id: str) -> None:
@@ -337,9 +546,11 @@ class MainWindow(QMainWindow):
             self.current_page_id = select_page_id
         if select_region_id is not None:
             self.current_region_id = select_region_id
+
         self.project_name.setText(
             f"{self.session.project.name} · format v{self.session.project.format_version}"
         )
+
         self.pages.blockSignals(True)
         self.pages.clear()
         page_row = -1
@@ -349,7 +560,9 @@ class MainWindow(QMainWindow):
                 page_row = i
         self.pages.setCurrentRow(page_row)
         self.pages.blockSignals(False)
+
         self._refresh_regions()
+        self._load_region_layers_into_editor()
         self._refresh_canvas()
         self._refresh_layers()
 
@@ -373,6 +586,11 @@ class MainWindow(QMainWindow):
         enabled = region is not None
         self.region_name.setEnabled(enabled)
         self.area_combo.setEnabled(enabled)
+        self.vn_text.setEnabled(enabled)
+        self.font_family.setEnabled(enabled)
+        self.font_size.setEnabled(enabled)
+        self.text_align.setEnabled(enabled)
+
         if region is None:
             self.region_id.setText("—")
             self.region_name.setText("")
@@ -380,34 +598,85 @@ class MainWindow(QMainWindow):
             self.cleanup_rect.setText("—")
             self.text_rect.setText("—")
             return
+
         self.region_id.setText(region.id)
         self.region_name.setText(region.name)
         self.ocr_rect.setText(self._rect_text(region.ocr_area))
         self.cleanup_rect.setText(self._rect_text(region.cleanup_area))
         self.text_rect.setText(self._rect_text(region.text_frame))
 
+    def _load_region_layers_into_editor(self) -> None:
+        page = self._current_page()
+        region = self._current_region()
+        if page is None or region is None:
+            self.vn_text.blockSignals(True)
+            self.vn_text.clear()
+            self.vn_text.blockSignals(False)
+            return
+
+        text_layer = page.layer_for_region(region.id, LayerKind.VIETNAMESE_TEXT)
+        if text_layer is None:
+            self.vn_text.setPlainText("")
+            self.font_size.setValue(32)
+            self.text_align.setCurrentIndex(self.text_align.findData("center"))
+            self.text_color = "#000000"
+            return
+
+        payload = text_layer.payload
+        self.vn_text.setPlainText(str(payload.get("content", "")))
+        family = str(payload.get("family", "Arial"))
+        self.font_family.setCurrentFont(self.font_family.currentFont().__class__(family))
+        self.font_size.setValue(max(6, int(payload.get("size", 32))))
+        align_index = self.text_align.findData(payload.get("align", "center"))
+        self.text_align.setCurrentIndex(max(0, align_index))
+        self.text_color = str(payload.get("color", "#000000"))
+
     def _refresh_canvas(self) -> None:
         page = self._current_page()
         if page is None:
             self.canvas.set_page(None, None)
             return
-        self.canvas.set_page(
-            page, self.session.assets.get(page.raw_asset), self.current_region_id
-        )
+        raw = self.session.assets.get(page.raw_asset)
+        if raw is None:
+            self.canvas.set_page(page, None, self.current_region_id)
+            return
+        try:
+            image = render_page(page, raw)
+        except Exception as exc:
+            self._error("Không dựng được trang", str(exc))
+            return
+        self.canvas.set_page(page, image, self.current_region_id)
 
     def _refresh_layers(self) -> None:
+        self.layers.blockSignals(True)
         self.layers.clear()
         page = self._current_page()
-        if page is None:
-            return
-        for layer in page.layers:
-            flags = []
-            if layer.locked:
-                flags.append("khóa")
-            if not layer.visible:
-                flags.append("ẩn")
-            suffix = f" ({', '.join(flags)})" if flags else ""
-            self.layers.addItem(f"{layer.kind.value}: {layer.name}{suffix}")
+        if page is not None:
+            for layer in page.layers:
+                label = {
+                    LayerKind.SOURCE: "Ảnh gốc",
+                    LayerKind.BACKGROUND_PATCH: "Bản vá nền",
+                    LayerKind.VIETNAMESE_TEXT: "Chữ Việt",
+                    LayerKind.GUIDE: "Hướng dẫn",
+                }.get(layer.kind, layer.name)
+                region_name = ""
+                if layer.region_id:
+                    try:
+                        region_name = f" · {page.region(layer.region_id).name}"
+                    except KeyError:
+                        region_name = " · vùng không tồn tại"
+                item = QListWidgetItem(f"{label}{region_name}")
+                item.setData(Qt.ItemDataRole.UserRole, layer.id)
+                if layer.kind == LayerKind.SOURCE:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setText(item.text() + " (khóa)")
+                else:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(
+                        Qt.CheckState.Checked if layer.visible else Qt.CheckState.Unchecked
+                    )
+                self.layers.addItem(item)
+        self.layers.blockSignals(False)
 
     def _current_page(self):
         if self.current_page_id is None:
