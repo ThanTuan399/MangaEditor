@@ -13,7 +13,7 @@ APP = QApplication.instance() or QApplication([])
 class UiSmokeTests(unittest.TestCase):
     def test_main_window_can_be_created(self):
         window = MainWindow()
-        self.assertIn("v0.1", window.windowTitle())
+        self.assertIn("v0.2", window.windowTitle())
         window.session.dirty = False
         window.close()
         window.deleteLater()
