@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -625,7 +625,7 @@ class MainWindow(QMainWindow):
         payload = text_layer.payload
         self.vn_text.setPlainText(str(payload.get("content", "")))
         family = str(payload.get("family", "Arial"))
-        self.font_family.setCurrentFont(self.font_family.currentFont().__class__(family))
+        self.font_family.setCurrentFont(QFont(family))
         self.font_size.setValue(max(6, int(payload.get("size", 32))))
         align_index = self.text_align.findData(payload.get("align", "center"))
         self.text_align.setCurrentIndex(max(0, align_index))
