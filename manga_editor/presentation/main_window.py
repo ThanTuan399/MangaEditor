@@ -1073,6 +1073,70 @@ class MainWindow(QMainWindow):
             f"Đã sao chép chữ gốc của {region.name}."
         )
 
+    def add_current_region_to_benchmark(self) -> None:
+        page = self._current_page()
+        region = self._current_region()
+        if page is None or region is None:
+            self._error(
+                "Chưa chọn Region",
+                "Chọn Region muốn đưa vào bộ kiểm thử.",
+            )
+            return
+        if region.ocr_area is None:
+            self._error(
+                "Chưa có vùng OCR",
+                "Region phải có vùng OCR trước khi thêm vào bộ test.",
+            )
+            return
+        if not self._confirm_ocr_editor_changes():
+            return
+        region = page.region(region.id)
+        truth = region.ocr_edited_text.strip()
+        if not truth:
+            self._error(
+                "Chưa có bản chép đúng",
+                "Hãy sửa/xác nhận văn bản OCR trước. "
+                "Bản đã sửa sẽ được dùng làm ground truth.",
+            )
+            return
+
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Chọn thư mục bộ kiểm thử OCR",
+        )
+        if not directory:
+            return
+
+        try:
+            crop = crop_raw_to_png(
+                self.session.assets[page.raw_asset],
+                region.ocr_area,
+            )
+            sample_id = add_benchmark_sample(
+                directory,
+                image_png=crop.png_bytes,
+                truth=truth,
+                language=region.ocr_language,
+                layout=region.ocr_layout,
+                tags=[
+                    region.ocr_layout,
+                    f"lang:{region.ocr_language}",
+                ],
+                source={
+                    "project_id": self.session.project.id,
+                    "page_id": page.id,
+                    "region_id": region.id,
+                    "page_name": page.name,
+                },
+            )
+        except Exception as exc:
+            self._error("Không thêm được mẫu benchmark", str(exc))
+            return
+
+        self.statusBar().showMessage(
+            f"Đã thêm {sample_id} vào bộ kiểm thử OCR."
+        )
+
     def _mark_ocr_editor_dirty(self) -> None:
         if self._syncing_ui or self.current_region_id is None:
             return
@@ -1084,10 +1148,12 @@ class MainWindow(QMainWindow):
 
         self._syncing_ui = True
         try:
+            availability = self.ocr_engine.registry.availability()
             self.ocr_engine_label.setText(
-                "Tesseract · sẵn sàng"
-                if self.ocr_engine.is_available()
-                else "Tesseract · chưa tìm thấy trong PATH"
+                "Tesseract: "
+                + ("sẵn sàng" if availability.get("tesseract") else "chưa có")
+                + " · Manga OCR: "
+                + ("sẵn sàng" if availability.get("mangaocr") else "chưa cài")
             )
 
             if page is None or region is None:
@@ -1096,6 +1162,8 @@ class MainWindow(QMainWindow):
                     self.ocr_edited_text.clear()
                 self.ocr_preview.clear()
                 self.ocr_preview.setText("Chưa chọn Region")
+                self.ocr_prepared_preview.clear()
+                self.ocr_prepared_preview.setText("Chưa chọn Region")
                 self.ocr_status.setText("Chưa quét.")
                 self.ocr_editor_region_id = None
                 return
@@ -1104,10 +1172,21 @@ class MainWindow(QMainWindow):
                 region.ocr_language
             )
             self.ocr_language.setCurrentIndex(max(0, language_index))
+
             layout_index = self.ocr_layout.findData(
                 region.ocr_layout
             )
             self.ocr_layout.setCurrentIndex(max(0, layout_index))
+
+            engine_index = self.ocr_engine_choice.findData(
+                region.ocr_engine_preference
+            )
+            self.ocr_engine_choice.setCurrentIndex(max(0, engine_index))
+
+            preprocess_index = self.ocr_preprocess.findData(
+                region.ocr_preprocess
+            )
+            self.ocr_preprocess.setCurrentIndex(max(0, preprocess_index))
 
             self.ocr_machine_text.setPlainText(
                 region.ocr_machine_text
@@ -1123,17 +1202,41 @@ class MainWindow(QMainWindow):
                 self.ocr_editor_dirty = False
 
             status_parts = [
-                f"Trạng thái: {STATE_LABELS[region.ocr_state]}"
+                f"Trạng thái: {STATE_LABELS[region.ocr_state]}",
+                f"Cấu hình: {region.ocr_engine_preference} · "
+                f"{region.ocr_preprocess}",
             ]
             if region.ocr_engine:
-                status_parts.append(f"Engine: {region.ocr_engine}")
+                status_parts.append(
+                    f"Engine thực tế: {region.ocr_engine}"
+                )
             if region.ocr_confidence is not None:
                 status_parts.append(
-                    f"Độ tin cậy tham khảo: {region.ocr_confidence:.0%}"
+                    "Confidence engine hiện tại: "
+                    f"{region.ocr_confidence:.0%} "
+                    "(chỉ để tham khảo trong cùng engine)"
+                )
+            metadata = region.ocr_result_metadata
+            if metadata.get("duration_ms") is not None:
+                status_parts.append(
+                    f"Thời gian OCR: {metadata['duration_ms']} ms"
+                )
+            if metadata.get("column_count", 1) > 1:
+                status_parts.append(
+                    f"Đã tách {metadata['column_count']} cột dọc "
+                    "theo thứ tự phải → trái."
                 )
             if region.ocr_is_stale:
                 status_parts.append(
-                    "Kết quả cũ: vùng/ngôn ngữ/bố cục đã thay đổi, nên quét lại."
+                    "Kết quả hiện tại đã cũ vì vùng/cấu hình OCR thay đổi."
+                )
+            if region.ocr_suspicions:
+                status_parts.append(
+                    "⚠ Nghi ngờ: " + " | ".join(region.ocr_suspicions)
+                )
+            elif region.ocr_machine_text:
+                status_parts.append(
+                    "Không có cảnh báo heuristic ở lần quét này."
                 )
             if region.ocr_warning:
                 status_parts.append(region.ocr_warning)
@@ -1142,23 +1245,45 @@ class MainWindow(QMainWindow):
             if region.ocr_area is None:
                 self.ocr_preview.clear()
                 self.ocr_preview.setText("Chưa có vùng OCR")
+                self.ocr_prepared_preview.clear()
+                self.ocr_prepared_preview.setText("Chưa có vùng OCR")
             else:
                 try:
                     crop = crop_raw_to_png(
                         self.session.assets[page.raw_asset],
                         region.ocr_area,
                     )
-                    pixmap = QPixmap.fromImage(crop.image).scaled(
+                    raw_pixmap = QPixmap.fromImage(crop.image).scaled(
                         380,
                         220,
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation,
                     )
-                    self.ocr_preview.setPixmap(pixmap)
+                    self.ocr_preview.setPixmap(raw_pixmap)
+
+                    prepared = prepare_image(
+                        crop.png_bytes,
+                        region.ocr_preprocess,
+                    )
+                    prepared_pixmap = QPixmap.fromImage(
+                        prepared.image
+                    ).scaled(
+                        380,
+                        220,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    self.ocr_prepared_preview.setPixmap(
+                        prepared_pixmap
+                    )
                 except Exception as exc:
                     self.ocr_preview.clear()
+                    self.ocr_prepared_preview.clear()
                     self.ocr_preview.setText(
                         f"Không hiển thị được ảnh cắt: {exc}"
+                    )
+                    self.ocr_prepared_preview.setText(
+                        "Không tạo được ảnh chuẩn bị."
                     )
         finally:
             self._syncing_ui = False
