@@ -337,15 +337,29 @@ class ProjectSession:
         region_id: str,
         language: str,
         layout: str,
+        engine_preference: str | None = None,
+        preprocess: str | None = None,
     ) -> int:
         page = self.project.page(page_id)
         region = page.region(region_id)
-        if region.ocr_language == language and region.ocr_layout == layout:
+        next_engine = engine_preference or region.ocr_engine_preference
+        next_preprocess = preprocess or region.ocr_preprocess
+        if (
+            region.ocr_language == language
+            and region.ocr_layout == layout
+            and region.ocr_engine_preference == next_engine
+            and region.ocr_preprocess == next_preprocess
+        ):
             return region.ocr_input_revision
 
         self.transact(
             "Cập nhật thiết lập OCR",
-            lambda: region.set_ocr_settings(language, layout),
+            lambda: region.set_ocr_settings(
+                language,
+                layout,
+                next_engine,
+                next_preprocess,
+            ),
         )
         return region.ocr_input_revision
 
@@ -357,7 +371,9 @@ class ProjectSession:
         machine_text: str,
         engine: str,
         warning: str = "",
+        suspicions: list[str] | None = None,
         confidence: float | None = None,
+        metadata: dict | None = None,
         replace_edited: bool = False,
     ) -> bool:
         """
@@ -379,7 +395,9 @@ class ProjectSession:
                 machine_text=machine_text,
                 engine=engine,
                 warning=warning,
+                suspicions=suspicions,
                 confidence=confidence,
+                metadata=metadata,
                 replace_edited=replace_edited,
             ),
         )
