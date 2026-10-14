@@ -868,6 +868,8 @@ class MainWindow(QMainWindow):
             self.current_region_id,
             self.ocr_language.currentData(),
             self.ocr_layout.currentData(),
+            self.ocr_engine_choice.currentData(),
+            self.ocr_preprocess.currentData(),
         )
         self._refresh_region_form()
         self._load_ocr_editor()
@@ -895,6 +897,8 @@ class MainWindow(QMainWindow):
             region.id,
             self.ocr_language.currentData(),
             self.ocr_layout.currentData(),
+            self.ocr_engine_choice.currentData(),
+            self.ocr_preprocess.currentData(),
         )
         region = page.region(region.id)
 
@@ -911,6 +915,10 @@ class MainWindow(QMainWindow):
             image_bytes=crop.png_bytes,
             language=region.ocr_language,
             layout=region.ocr_layout,
+            options={
+                "engine": region.ocr_engine_preference,
+                "preprocess": region.ocr_preprocess,
+            },
         )
         target = OcrTarget(
             page_id=page.id,
@@ -926,7 +934,8 @@ class MainWindow(QMainWindow):
         self.ocr_task = task
         self._set_ocr_busy(True)
         self.ocr_status.setText(
-            f"Đang quét {region.name} bằng Tesseract…"
+            f"Đang quét {region.name} · engine={region.ocr_engine_preference} · "
+            f"profile={region.ocr_preprocess}…"
         )
         task.start()
 
@@ -942,7 +951,9 @@ class MainWindow(QMainWindow):
             machine_text=result.text,
             engine=result.engine,
             warning=result.warning,
+            suspicions=list(result.metadata.get("suspicions", [])),
             confidence=result.confidence,
+            metadata=result.metadata,
             replace_edited=False,
         )
         if not accepted:
@@ -1611,6 +1622,8 @@ class MainWindow(QMainWindow):
             self.ocr_state.setEnabled(enabled)
             self.ocr_language.setEnabled(enabled)
             self.ocr_layout.setEnabled(enabled)
+            self.ocr_engine_choice.setEnabled(enabled)
+            self.ocr_preprocess.setEnabled(enabled)
             self.ocr_edited_text.setEnabled(enabled)
 
             if region is None:
