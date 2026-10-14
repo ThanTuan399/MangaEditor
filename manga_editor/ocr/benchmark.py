@@ -80,6 +80,80 @@ def omitted_truth_lines(truth: str, prediction: str) -> int:
     return count
 
 
+def reading_order_score(truth: str, prediction: str) -> float:
+    """Điểm 0..1 dựa trên thứ tự các dòng ground-truth trong kết quả."""
+    truth_lines = [
+        compact_text(line)
+        for line in normalize_newlines(truth).splitlines()
+        if compact_text(line)
+    ]
+    if not truth_lines:
+        return 1.0
+    prediction_compact = compact_text(prediction)
+    positions = [
+        prediction_compact.find(line)
+        for line in truth_lines
+    ]
+    if len(positions) == 1:
+        return 1.0 if positions[0] >= 0 else 0.0
+
+    good = 0
+    total = len(positions) - 1
+    for left, right in zip(positions, positions[1:]):
+        if left >= 0 and right >= 0 and left < right:
+            good += 1
+    return good / total
+
+
+def _aggregate_rows(rows: list[dict]) -> dict:
+    if not rows:
+        return {
+            "sample_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "mean_cer": None,
+            "mean_compact_cer": None,
+            "mean_reading_order_score": None,
+            "total_omitted_truth_lines": 0,
+            "mean_duration_ms": None,
+        }
+    success_count = sum(1 for row in rows if not row["error"])
+    return {
+        "sample_count": len(rows),
+        "success_count": success_count,
+        "failure_count": len(rows) - success_count,
+        "mean_cer": sum(row["cer"] for row in rows) / len(rows),
+        "mean_compact_cer": (
+            sum(row["cer_compact"] for row in rows) / len(rows)
+        ),
+        "mean_reading_order_score": (
+            sum(row["reading_order_score"] for row in rows) / len(rows)
+        ),
+        "total_omitted_truth_lines": sum(
+            row["omitted_truth_lines"] for row in rows
+        ),
+        "mean_duration_ms": (
+            sum(row["duration_ms"] for row in rows) / len(rows)
+        ),
+    }
+
+
+def _group_report(results: list[dict]) -> dict:
+    groups: dict[str, list[dict]] = {}
+    for row in results:
+        keys = [
+            f"language:{row['language']}",
+            f"layout:{row['layout']}",
+        ]
+        keys.extend(f"tag:{tag}" for tag in row.get("tags", []))
+        for key in keys:
+            groups.setdefault(key, []).append(row)
+    return {
+        key: _aggregate_rows(rows)
+        for key, rows in sorted(groups.items())
+    }
+
+
 def load_manifest(dataset_dir: str | Path) -> list[BenchmarkSample]:
     root = Path(dataset_dir)
     path = root / "manifest.json"
@@ -162,11 +236,18 @@ def run_benchmark(
                 "engine": result_engine,
                 "requested_engine": engine,
                 "preprocess": preprocess,
+                "edit_operations": levenshtein_distance(
+                    normalize_newlines(sample.truth),
+                    normalize_newlines(prediction),
+                ),
                 "cer": character_error_rate(sample.truth, prediction),
                 "cer_compact": compact_character_error_rate(
                     sample.truth, prediction
                 ),
                 "omitted_truth_lines": omitted_truth_lines(
+                    sample.truth, prediction
+                ),
+                "reading_order_score": reading_order_score(
                     sample.truth, prediction
                 ),
                 "duration_ms": duration_ms,
@@ -177,26 +258,16 @@ def run_benchmark(
             }
         )
 
-    success = [row for row in results if not row["error"]]
-    mean_cer = (
-        sum(row["cer"] for row in success) / len(success)
-        if success else None
-    )
-    mean_compact_cer = (
-        sum(row["cer_compact"] for row in success) / len(success)
-        if success else None
-    )
-    total_ms = sum(row["duration_ms"] for row in results)
-
+    overall = _aggregate_rows(results)
     return {
         "dataset": str(root),
         "requested_engine": engine,
         "preprocess": preprocess,
-        "sample_count": len(results),
-        "success_count": len(success),
-        "mean_cer": mean_cer,
-        "mean_compact_cer": mean_compact_cer,
-        "total_duration_ms": total_ms,
+        **overall,
+        "total_duration_ms": sum(
+            row["duration_ms"] for row in results
+        ),
+        "groups": _group_report(results),
         "results": results,
     }
 
@@ -238,6 +309,7 @@ def main() -> int:
     compact = report["mean_compact_cer"]
     print(f"Samples: {report['sample_count']}")
     print(f"Success: {report['success_count']}")
+    print(f"Failures: {report['failure_count']}")
     print(
         "Mean CER: "
         + ("n/a" if mean is None else f"{mean:.4f}")
@@ -245,6 +317,11 @@ def main() -> int:
     print(
         "Mean compact CER: "
         + ("n/a" if compact is None else f"{compact:.4f}")
+    )
+    order_score = report["mean_reading_order_score"]
+    print(
+        "Mean reading-order score: "
+        + ("n/a" if order_score is None else f"{order_score:.4f}")
     )
     print(f"Report: {output}")
     return 0
