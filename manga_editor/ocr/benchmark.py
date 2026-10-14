@@ -86,7 +86,12 @@ def load_manifest(dataset_dir: str | Path) -> list[BenchmarkSample]:
     if not path.exists():
         raise FileNotFoundError(f"Không tìm thấy {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
-    raw_samples = data.get("samples", data if isinstance(data, list) else [])
+    if isinstance(data, dict):
+        raw_samples = data.get("samples", [])
+    elif isinstance(data, list):
+        raw_samples = data
+    else:
+        raise ValueError("manifest.json phải là object hoặc danh sách sample.")
     samples = []
     for item in raw_samples:
         samples.append(
