@@ -1,4 +1,4 @@
-# MangaEditor — v0.3
+# MangaEditor — v0.4
 
 MangaEditor được dựng lại theo hướng **Region là đơn vị trung tâm, raw không bị phá, OCR/patch/chữ đều gắn bằng ID**.
 
@@ -26,18 +26,48 @@ MangaEditor được dựng lại theo hướng **Region là đơn vị trung t�
 - Migration project v1 → v2.
 
 ### v0.3 — OCR theo Region
-- Người dùng chọn Region và `ocr_area` trước.
-- Ảnh cắt OCR lấy từ raw, không từ preview đã chỉnh.
-- Engine ban đầu: Tesseract adapter.
-- Ngôn ngữ: Nhật, Anh, Trung giản/phồn thể, Hàn, Việt.
-- Bố cục: tự động/khối, ngang, dọc.
-- OCR chạy bằng QThread, UI không bị khóa.
-- Kết quả máy và bản đã sửa lưu riêng.
-- Có ảnh preview vùng OCR.
-- Có nút lưu bản sửa, đánh dấu đã duyệt, dùng lại kết quả máy và sao chép chữ gốc.
-- Kết quả task gắn `page_id + region_id + ocr_input_revision`; kết quả stale bị từ chối.
-- Quét lại không tự ghi đè văn bản người dùng đã sửa.
-- Project format v3, tự migration v1/v2 → v3.
+- Chọn Region + `ocr_area` trước khi OCR.
+- Crop OCR luôn lấy từ raw.
+- Tesseract adapter.
+- OCR chạy QThread.
+- Kết quả máy và bản người dùng sửa lưu riêng.
+- `page_id + region_id + ocr_input_revision` chống ghi nhầm/stale.
+- Project format v3.
+
+### v0.4 — OCR manga có đo lường
+- `OcrPipeline` tách UI khỏi engine/preprocess.
+- Engine:
+  - Tesseract;
+  - Manga OCR tùy chọn cho tiếng Nhật;
+  - Auto fallback.
+- Profile chuẩn bị ảnh:
+  - original;
+  - upscale2x;
+  - contrast;
+  - manga_clean.
+- Hiển thị song song crop RAW và ảnh sau preprocess.
+- Tesseract tiếng Nhật dọc có thử tách cột và xử lý phải → trái.
+- Cảnh báo kết quả đáng nghi nhưng không tự sửa câu.
+- Region lưu engine preference, preprocess, warning/suspicion và metadata.
+- Có nút đưa Region đã duyệt vào dataset benchmark.
+- Benchmark CLI đo:
+  - CER;
+  - compact CER;
+  - số phép sửa ký tự;
+  - bỏ sót dòng;
+  - thứ tự đọc;
+  - thời gian xử lý;
+  - nhóm language/layout/tag.
+- Project format v4; migration tuần tự v1 → v4.
+
+## Cài đặt cơ bản
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python main.py
+```
 
 ## Tesseract trên Windows
 
@@ -49,22 +79,59 @@ C:\Program Files\Tesseract-OCR\tesseract.exe
 C:\Program Files (x86)\Tesseract-OCR\tesseract.exe
 ```
 
-Hoặc đặt:
+Hoặc:
 
 ```powershell
 $env:TESSERACT_CMD="C:\Program Files\Tesseract-OCR\tesseract.exe"
 ```
 
-Cần cài language data tương ứng; ví dụ OCR tiếng Nhật dọc cần `jpn_vert`.
+OCR tiếng Nhật dọc bằng Tesseract cần language data `jpn_vert`.
 
-## Chạy
+## Manga OCR tùy chọn
+
+Không nằm trong `requirements.txt` mặc định.
 
 ```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python main.py
+python -m pip install manga-ocr
 ```
+
+hoặc:
+
+```powershell
+python -m pip install -e ".[mangaocr]"
+```
+
+Trong app chọn:
+
+```text
+Engine → Manga OCR
+```
+
+hoặc:
+
+```text
+Engine → Tự động fallback
+```
+
+## Benchmark OCR
+
+Từ app, chọn Region đã có bản OCR sửa/xác nhận rồi bấm:
+
+```text
+Thêm Region vào bộ test OCR
+```
+
+Sau khi có dataset:
+
+```powershell
+python -m manga_editor.ocr.benchmark D:\OCRBench --engine tesseract --preprocess original
+python -m manga_editor.ocr.benchmark D:\OCRBench --engine tesseract --preprocess manga_clean
+python -m manga_editor.ocr.benchmark D:\OCRBench --engine mangaocr --preprocess original
+```
+
+Xem schema tại `benchmarks/README.md`.
+
+Không so confidence giữa các engine như thể chúng dùng cùng một thang đo. Dùng ground truth, CER, bỏ sót, thứ tự đọc và công sửa để đánh giá.
 
 ## Test
 
@@ -72,10 +139,11 @@ python main.py
 python -m unittest discover -s tests -v
 ```
 
-GitHub Actions chạy compile, unit test, renderer, OCR task và UI smoke test.
+GitHub Actions chạy compile, unit test, renderer, OCR task, benchmark logic và UI smoke test.
 
 ## Tài liệu
 - `docs/V0_FOUNDATION.md`
 - `docs/V0_1.md`
 - `docs/V0_2.md`
 - `docs/V0_3.md`
+- `docs/V0_4.md`
