@@ -24,6 +24,10 @@ def migrate_manifest(data: dict) -> dict:
             manifest = _v2_to_v3(manifest)
             version = 3
             continue
+        if version == 3:
+            manifest = _v3_to_v4(manifest)
+            version = 4
+            continue
         raise ValueError(f"Không có bước chuyển từ format {version}.")
 
     if version != PROJECT_FORMAT_VERSION:
@@ -104,4 +108,20 @@ def _v2_to_v3(manifest: dict) -> dict:
             region.setdefault("ocr_result_revision", -1)
 
     manifest["format_version"] = 3
+    return manifest
+
+
+def _v3_to_v4(manifest: dict) -> dict:
+    settings = manifest.setdefault("settings", {})
+    settings.setdefault("default_ocr_engine", "auto")
+    settings.setdefault("default_ocr_preprocess", "original")
+
+    for page in manifest.get("pages", []):
+        for region in page.get("regions", []):
+            region.setdefault("ocr_engine_preference", "auto")
+            region.setdefault("ocr_preprocess", "original")
+            region.setdefault("ocr_suspicions", [])
+            region.setdefault("ocr_result_metadata", {})
+
+    manifest["format_version"] = 4
     return manifest
