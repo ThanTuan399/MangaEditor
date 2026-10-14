@@ -353,5 +353,46 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(page.region(second).ocr_machine_text, "")
 
 
+    def test_ocr_pipeline_settings_change_input_revision(self):
+        region_id = self.session.add_region(self.page_id)
+        region = self.session.project.page(self.page_id).region(region_id)
+        start = region.ocr_input_revision
+
+        self.session.set_ocr_settings(
+            self.page_id,
+            region_id,
+            "ja",
+            "vertical",
+            "tesseract",
+            "manga_clean",
+        )
+        region = self.session.project.page(self.page_id).region(region_id)
+        self.assertGreater(region.ocr_input_revision, start)
+        self.assertEqual(region.ocr_engine_preference, "tesseract")
+        self.assertEqual(region.ocr_preprocess, "manga_clean")
+
+    def test_ocr_result_keeps_suspicions_and_metadata(self):
+        region_id = self.session.add_region(self.page_id)
+        self.session.set_region_area(
+            self.page_id, region_id, "ocr_area", Rect(10, 20, 100, 80)
+        )
+        region = self.session.project.page(self.page_id).region(region_id)
+
+        accepted = self.session.apply_ocr_result(
+            self.page_id,
+            region_id,
+            region.ocr_input_revision,
+            "テスト",
+            "fake",
+            warning="check",
+            suspicions=["nghi ngờ"],
+            metadata={"duration_ms": 55},
+        )
+        self.assertTrue(accepted)
+        region = self.session.project.page(self.page_id).region(region_id)
+        self.assertEqual(region.ocr_suspicions, ["nghi ngờ"])
+        self.assertEqual(region.ocr_result_metadata["duration_ms"], 55)
+
+
 if __name__ == "__main__":
     unittest.main()
