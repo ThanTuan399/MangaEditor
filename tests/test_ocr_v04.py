@@ -17,6 +17,7 @@ from manga_editor.ocr.benchmark import (
     compact_character_error_rate,
     load_manifest,
     omitted_truth_lines,
+    reading_order_score,
     run_benchmark,
 )
 from manga_editor.ocr.layout import segment_vertical_columns
@@ -233,6 +234,12 @@ class OcrV04Tests(unittest.TestCase):
         self.assertEqual(
             omitted_truth_lines("一行目\n二行目", "一行目"), 1
         )
+        self.assertEqual(
+            reading_order_score("右\n左", "右左"), 1.0
+        )
+        self.assertEqual(
+            reading_order_score("右\n左", "左右"), 0.0
+        )
 
     def test_dataset_writer_and_benchmark_runner(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -261,6 +268,11 @@ class OcrV04Tests(unittest.TestCase):
         self.assertEqual(report["sample_count"], 1)
         self.assertEqual(report["success_count"], 1)
         self.assertEqual(report["mean_cer"], 0.0)
+        self.assertEqual(report["mean_reading_order_score"], 1.0)
+        self.assertEqual(report["failure_count"], 0)
+        self.assertIn("language:ja", report["groups"])
+        self.assertIn("layout:vertical", report["groups"])
+        self.assertIn("tag:clean", report["groups"])
         self.assertEqual(report["results"][0]["engine"], "fake")
 
 
