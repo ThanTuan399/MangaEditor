@@ -123,8 +123,12 @@ class ContentRegion:
     ocr_machine_text: str = ""
     ocr_edited_text: str = ""
     ocr_engine: str = ""
+    ocr_engine_preference: str = "auto"
+    ocr_preprocess: str = "original"
     ocr_warning: str = ""
+    ocr_suspicions: list[str] = field(default_factory=list)
     ocr_confidence: float | None = None
+    ocr_result_metadata: dict = field(default_factory=dict)
     ocr_input_revision: int = 0
     ocr_result_revision: int = -1
 
@@ -176,12 +180,36 @@ class ContentRegion:
             raise ValueError(f"Phạm vi không hợp lệ: {area_kind}")
         self.revision += 1
 
-    def set_ocr_settings(self, language: str, layout: str) -> None:
+    def set_ocr_settings(
+        self,
+        language: str,
+        layout: str,
+        engine_preference: str | None = None,
+        preprocess: str | None = None,
+    ) -> None:
         if layout not in {"auto", "horizontal", "vertical"}:
             raise ValueError("Bố cục OCR không hợp lệ.")
-        changed = self.ocr_language != language or self.ocr_layout != layout
+        if engine_preference is not None and engine_preference not in {
+            "auto", "tesseract", "mangaocr"
+        }:
+            raise ValueError("Bộ đọc OCR không hợp lệ.")
+        if preprocess is not None and preprocess not in {
+            "original", "upscale2x", "contrast", "manga_clean"
+        }:
+            raise ValueError("Cách chuẩn bị ảnh OCR không hợp lệ.")
+
+        next_engine = engine_preference or self.ocr_engine_preference
+        next_preprocess = preprocess or self.ocr_preprocess
+        changed = (
+            self.ocr_language != language
+            or self.ocr_layout != layout
+            or self.ocr_engine_preference != next_engine
+            or self.ocr_preprocess != next_preprocess
+        )
         self.ocr_language = language
         self.ocr_layout = layout
+        self.ocr_engine_preference = next_engine
+        self.ocr_preprocess = next_preprocess
         if changed:
             self.ocr_input_revision += 1
             self.ocr_state = WorkState.NOT_STARTED
@@ -192,13 +220,17 @@ class ContentRegion:
         machine_text: str,
         engine: str,
         warning: str = "",
+        suspicions: list[str] | None = None,
         confidence: float | None = None,
+        metadata: dict | None = None,
         replace_edited: bool = False,
     ) -> None:
         self.ocr_machine_text = machine_text
         self.ocr_engine = engine
         self.ocr_warning = warning
+        self.ocr_suspicions = list(suspicions or [])
         self.ocr_confidence = confidence
+        self.ocr_result_metadata = dict(metadata or {})
         self.ocr_result_revision = self.ocr_input_revision
         if replace_edited or not self.ocr_edited_text.strip():
             self.ocr_edited_text = machine_text
@@ -239,8 +271,12 @@ class ContentRegion:
             "ocr_machine_text": self.ocr_machine_text,
             "ocr_edited_text": self.ocr_edited_text,
             "ocr_engine": self.ocr_engine,
+            "ocr_engine_preference": self.ocr_engine_preference,
+            "ocr_preprocess": self.ocr_preprocess,
             "ocr_warning": self.ocr_warning,
+            "ocr_suspicions": list(self.ocr_suspicions),
             "ocr_confidence": self.ocr_confidence,
+            "ocr_result_metadata": dict(self.ocr_result_metadata),
             "ocr_input_revision": self.ocr_input_revision,
             "ocr_result_revision": self.ocr_result_revision,
             "cleanup_parts": [rect.to_dict() for rect in self.cleanup_parts],
@@ -284,8 +320,12 @@ class ContentRegion:
             ocr_machine_text=ocr_machine,
             ocr_edited_text=ocr_edited,
             ocr_engine=str(data.get("ocr_engine", "")),
+            ocr_engine_preference=str(data.get("ocr_engine_preference", "auto")),
+            ocr_preprocess=str(data.get("ocr_preprocess", "original")),
             ocr_warning=str(data.get("ocr_warning", "")),
+            ocr_suspicions=list(data.get("ocr_suspicions", [])),
             ocr_confidence=data.get("ocr_confidence"),
+            ocr_result_metadata=dict(data.get("ocr_result_metadata", {})),
             ocr_input_revision=input_revision,
             ocr_result_revision=result_revision,
             cleanup_parts=cleanup_parts,
@@ -382,14 +422,24 @@ class Page:
 @dataclass(slots=True)
 class ProjectSettings:
     default_language: str = "ja"
+    default_ocr_engine: str = "auto"
+    default_ocr_preprocess: str = "original"
 
     def to_dict(self) -> dict:
-        return {"default_language": self.default_language}
+        return {
+            "default_language": self.default_language,
+            "default_ocr_engine": self.default_ocr_engine,
+            "default_ocr_preprocess": self.default_ocr_preprocess,
+        }
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "ProjectSettings":
         data = data or {}
-        return cls(default_language=data.get("default_language", "ja"))
+        return cls(
+            default_language=data.get("default_language", "ja"),
+            default_ocr_engine=data.get("default_ocr_engine", "auto"),
+            default_ocr_preprocess=data.get("default_ocr_preprocess", "original"),
+        )
 
 
 @dataclass(slots=True)
