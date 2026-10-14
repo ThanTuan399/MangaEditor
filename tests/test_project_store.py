@@ -48,6 +48,14 @@ class ProjectStoreTests(unittest.TestCase):
             page_id, region_id, "cleanup",
             WorkState.REVIEWED,
         )
+        session.set_ocr_settings(
+            page_id,
+            region_id,
+            "ja",
+            "vertical",
+            "auto",
+            "manga_clean",
+        )
         region = session.project.page(page_id).region(region_id)
         session.apply_ocr_result(
             page_id,
@@ -55,7 +63,9 @@ class ProjectStoreTests(unittest.TestCase):
             region.ocr_input_revision,
             "機械 OCR",
             "fake",
+            suspicions=["Kiểm tra cột dọc"],
             confidence=0.88,
+            metadata={"duration_ms": 123, "column_count": 2},
         )
         session.set_ocr_edited_text(
             page_id, region_id, "OCR đã sửa", reviewed=True
@@ -91,6 +101,10 @@ class ProjectStoreTests(unittest.TestCase):
         self.assertEqual(region.ocr_edited_text, "OCR đã sửa")
         self.assertEqual(region.ocr_state, WorkState.REVIEWED)
         self.assertEqual(region.ocr_confidence, 0.88)
+        self.assertEqual(region.ocr_engine_preference, "auto")
+        self.assertEqual(region.ocr_preprocess, "manga_clean")
+        self.assertEqual(region.ocr_suspicions, ["Kiểm tra cột dọc"])
+        self.assertEqual(region.ocr_result_metadata["duration_ms"], 123)
 
         patch = page.layer_for_region(
             region_id, LayerKind.BACKGROUND_PATCH
@@ -132,9 +146,9 @@ class ProjectStoreTests(unittest.TestCase):
                 manifest = json.loads(
                     archive.read("project.json")
                 )
-        self.assertEqual(manifest["format_version"], 3)
+        self.assertEqual(manifest["format_version"], 4)
 
-    def test_v1_project_is_migrated_to_v3(self):
+    def test_v1_project_is_migrated_to_v4(self):
         raw = b"legacy-raw"
         digest = hashlib.sha256(raw).hexdigest()
         manifest = {
@@ -222,7 +236,7 @@ class ProjectStoreTests(unittest.TestCase):
 
             loaded, _ = ProjectStore.load(path)
 
-        self.assertEqual(loaded.format_version, 3)
+        self.assertEqual(loaded.format_version, 4)
         region = loaded.page("page_old").region(
             "region_old"
         )
@@ -230,6 +244,10 @@ class ProjectStoreTests(unittest.TestCase):
             region.cleanup_parts,
             [Rect(10, 20, 30, 40)],
         )
+        self.assertEqual(region.ocr_engine_preference, "auto")
+        self.assertEqual(region.ocr_preprocess, "original")
+        self.assertEqual(region.ocr_suspicions, [])
+        self.assertEqual(region.ocr_result_metadata, {})
         patch = loaded.page("page_old").layer(
             "patch"
         )
