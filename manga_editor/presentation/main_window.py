@@ -34,11 +34,12 @@ from manga_editor import APP_VERSION
 from manga_editor.application.session import ProjectSession
 from manga_editor.domain.geometry import Rect
 from manga_editor.domain.models import LayerKind, WorkState
+from manga_editor.infrastructure.benchmark_dataset import add_benchmark_sample
 from manga_editor.infrastructure.image_io import load_raw_image
 from manga_editor.infrastructure.ocr_crop import crop_raw_to_png
 from manga_editor.infrastructure.project_store import ProjectStore
 from manga_editor.infrastructure.renderer import render_page, save_rendered_page
-from manga_editor.ocr import OcrRequest, TesseractEngine
+from manga_editor.ocr import OcrPipeline, OcrRequest, PROFILES, prepare_image
 from .canvas import CanvasView
 from .ocr_task import OcrTarget, OcrTask
 
@@ -53,7 +54,7 @@ STATE_LABELS = {
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"MangaEditor v0.3 — {APP_VERSION}")
+        self.setWindowTitle(f"MangaEditor v0.4 — {APP_VERSION}")
         self.resize(1540, 930)
 
         self.session = ProjectSession()
@@ -67,7 +68,7 @@ class MainWindow(QMainWindow):
         self.editor_dirty = False
         self.ocr_editor_region_id: str | None = None
         self.ocr_editor_dirty = False
-        self.ocr_engine = TesseractEngine()
+        self.ocr_engine = OcrPipeline()
         self.ocr_task: OcrTask | None = None
         self._syncing_ui = False
 
@@ -117,13 +118,13 @@ class MainWindow(QMainWindow):
         right_content = QWidget()
         right_layout = QVBoxLayout(right_content)
 
-        project_box = QGroupBox("v0.3 — OCR theo Region")
+        project_box = QGroupBox("v0.4 — OCR manga có đo lường")
         project_layout = QVBoxLayout(project_box)
         self.project_name = QLabel()
         project_layout.addWidget(self.project_name)
         note = QLabel(
-            "OCR chỉ đọc Region người dùng chọn trước. Kết quả máy và bản đã sửa "
-            "được lưu riêng; task nền luôn trả về đúng region_id + revision."
+            "Ưu tiên OCR manga Nhật: có benchmark bằng bản chép đúng, profile chuẩn bị "
+            "ảnh, xử lý cột dọc phải→trái, engine thay thế và cảnh báo kết quả đáng nghi."
         )
         note.setWordWrap(True)
         project_layout.addWidget(note)
@@ -254,17 +255,45 @@ class MainWindow(QMainWindow):
         self.ocr_layout.currentIndexChanged.connect(self._ocr_settings_changed)
         ocr_form.addRow("Bố cục", self.ocr_layout)
 
+        self.ocr_engine_choice = QComboBox()
+        self.ocr_engine_choice.addItem("Tự động fallback", "auto")
+        self.ocr_engine_choice.addItem("Tesseract", "tesseract")
+        self.ocr_engine_choice.addItem("Manga OCR (tiếng Nhật, nếu đã cài)", "mangaocr")
+        self.ocr_engine_choice.currentIndexChanged.connect(
+            self._ocr_settings_changed
+        )
+        ocr_form.addRow("Engine", self.ocr_engine_choice)
+
+        self.ocr_preprocess = QComboBox()
+        for key, label in PROFILES.items():
+            self.ocr_preprocess.addItem(label, key)
+        self.ocr_preprocess.currentIndexChanged.connect(
+            self._ocr_settings_changed
+        )
+        ocr_form.addRow("Chuẩn bị ảnh", self.ocr_preprocess)
+
         self.ocr_engine_label = QLabel()
-        ocr_form.addRow("Bộ đọc", self.ocr_engine_label)
+        self.ocr_engine_label.setWordWrap(True)
+        ocr_form.addRow("Tình trạng engine", self.ocr_engine_label)
         ocr_layout.addLayout(ocr_form)
 
+        ocr_layout.addWidget(QLabel("Ảnh cắt RAW — luôn giữ để đối chiếu"))
         self.ocr_preview = QLabel("Chưa có vùng OCR")
         self.ocr_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ocr_preview.setMinimumHeight(160)
+        self.ocr_preview.setMinimumHeight(150)
         self.ocr_preview.setStyleSheet(
             "QLabel { background:#171b22; border:1px solid #3b4350; }"
         )
         ocr_layout.addWidget(self.ocr_preview)
+
+        ocr_layout.addWidget(QLabel("Ảnh đưa vào engine sau bước chuẩn bị"))
+        self.ocr_prepared_preview = QLabel("Chưa có ảnh chuẩn bị")
+        self.ocr_prepared_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ocr_prepared_preview.setMinimumHeight(150)
+        self.ocr_prepared_preview.setStyleSheet(
+            "QLabel { background:#171b22; border:1px solid #3b4350; }"
+        )
+        ocr_layout.addWidget(self.ocr_prepared_preview)
 
         scan_row = QHBoxLayout()
         self.scan_ocr_button = QPushButton("Quét Region đang chọn")
@@ -306,6 +335,10 @@ class MainWindow(QMainWindow):
         ocr_buttons.addWidget(use_machine)
         ocr_buttons.addWidget(copy_source)
         ocr_layout.addLayout(ocr_buttons)
+
+        benchmark_button = QPushButton("Thêm Region vào bộ test OCR")
+        benchmark_button.clicked.connect(self.add_current_region_to_benchmark)
+        ocr_layout.addWidget(benchmark_button)
 
         right_layout.addWidget(ocr_box)
 
@@ -412,7 +445,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         self.statusBar().showMessage(
-            "v0.3: OCR chạy nền theo Region, giữ riêng kết quả máy và bản đã sửa."
+            "v0.4: OCR manga có benchmark, preprocess, cột dọc và fallback engine."
         )
 
     @staticmethod
