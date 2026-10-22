@@ -1,0 +1,6 @@
+﻿Generated: 2026-10-22 21:53:24
+Windows: Microsoft Windows NT 10.0.26200.0
+Python: Python 3.14.7
+Git: git version 2.53.0.windows.1
+pyproject.toml: present
+uv.lock: present
