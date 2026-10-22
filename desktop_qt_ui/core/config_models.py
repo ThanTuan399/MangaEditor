@@ -10,8 +10,8 @@ VALID_LAYOUT_MODES = {"smart_scaling", "strict", "balloon_fill"}
 
 
 class TranslatorSettings(BaseModel):
-    translator: str = "openai_hq"
-    target_lang: str = "CHS"
+    translator: str = "local_nllb"
+    target_lang: str = "VIN"
     keep_lang: str = "none"
     local_model_name: str = "facebook/nllb-200-distilled-600M"
     local_model_path: Optional[str] = None
@@ -22,7 +22,7 @@ class TranslatorSettings(BaseModel):
     local_max_new_tokens: int = 256
     local_num_beams: int = 3
     local_files_only: bool = False
-    enable_streaming: bool = True
+    enable_streaming: bool = False
     no_text_lang_skip: bool = False
     # 相对路径，后端会用 BASE_PATH 拼接（打包后=app.exe 同级，开发时=项目根目录）
     high_quality_prompt_path: Optional[str] = "dict/prompt_example.yaml"

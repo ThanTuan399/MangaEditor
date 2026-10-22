@@ -265,9 +265,9 @@ class UpscaleConfig(BaseModel):
     """Tile size for Real-CUGAN upscaling (default: 400, 0 = process full image without tiling)"""
 
 class TranslatorConfig(BaseModel):
-    translator: Translator = Translator.openai_hq
+    translator: Translator = Translator.local_nllb
     """Language translator to use"""
-    target_lang: str = 'ENG' #todo: validate VALID_LANGUAGES #todo: convert to enum
+    target_lang: str = 'VIN' #todo: validate VALID_LANGUAGES #todo: convert to enum
     """Destination language"""
     keep_lang: str = 'none'
     """After text merging, keep only regions detected as this source language for later processing. Filtered regions remain unchanged. Use 'none' to disable."""
