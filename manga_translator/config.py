@@ -35,7 +35,7 @@ class TranslatorChain:
         """
         Returns True if the chain contains offline translators.
         """
-        return False
+        return any(key == Translator.local_nllb for key, _lang in self.chain)
 
     def __eq__(self, __o: object) -> bool:
         if type(__o) is str:
@@ -125,6 +125,7 @@ class Ocr(str, Enum):
     gemini_ocr = "gemini_ocr"
 
 class Translator(str, Enum):
+    local_nllb = "local_nllb"
     openai = "openai"
     openai_hq = "openai_hq"
     gemini = "gemini"
@@ -270,6 +271,27 @@ class TranslatorConfig(BaseModel):
     """Destination language"""
     keep_lang: str = 'none'
     """After text merging, keep only regions detected as this source language for later processing. Filtered regions remain unchanged. Use 'none' to disable."""
+
+    # Local/offline NLLB translator settings.
+    local_model_name: str = 'facebook/nllb-200-distilled-600M'
+    """Hugging Face model id used by the local NLLB translator."""
+    local_model_path: Optional[str] = None
+    """Optional local model directory. When set, no model download is attempted."""
+    local_source_lang: str = 'auto'
+    """Source language hint for local translation: auto, JPN, CHS, CHT, or ENG."""
+    local_device: str = 'auto'
+    """Local translation device: auto, cuda, or cpu."""
+    local_batch_size: int = 8
+    """Number of text regions translated together by the local model."""
+    local_max_input_tokens: int = 256
+    """Maximum input token length per text region."""
+    local_max_new_tokens: int = 256
+    """Maximum generated token length per text region."""
+    local_num_beams: int = 3
+    """Beam search width used by the local translator."""
+    local_files_only: bool = False
+    """Require model files to already exist locally; disables first-run download."""
+
     enable_streaming: bool = True
     """Enable unified streaming transport for supported AI translators."""
     no_text_lang_skip: bool = False

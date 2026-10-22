@@ -1396,6 +1396,8 @@ class MainAppLogic(QObject):
             ],
             "translator": [member.value for member in Translator],
             "keep_lang": ["none"] + list(self.translation_service.get_keep_languages().keys()),
+            "local_source_lang": ["auto", "JPN", "CHS", "CHT", "ENG"],
+            "local_device": ["auto", "cuda", "cpu"],
             "detector": [member.value for member in Detector],
             "colorizer": [member.value for member in Colorizer],
             "inpainter": [member.value for member in Inpainter],
