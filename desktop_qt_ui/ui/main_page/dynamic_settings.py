@@ -209,6 +209,7 @@ _OPTIONAL_INPUT_KEYS = frozenset({
     "font_size",
     "ocr_vl_custom_prompt",
     "ai_ocr_custom_prompt",
+    "local_model_path",
 })
 
 _LEGACY_SETTING_SECTIONS = (
@@ -1294,6 +1295,14 @@ def _create_param_widgets(self, data, parent_layout, prefix=""):
                 widget.setMinimumWidth(320)
                 widget.setPlaceholderText("Read the text and return only the recognized text.")
                 widget.editingFinished.connect(lambda k=full_key, w=widget: self._on_setting_changed(w.text(), k, None))
+            elif key == 'local_model_path':
+                widget.setMinimumWidth(320)
+                widget.setPlaceholderText("Optional local model directory")
+                widget.editingFinished.connect(
+                    lambda k=full_key, w=widget: self._on_setting_changed(
+                        w.text().strip() or None, k, None
+                    )
+                )
 
         elif (isinstance(value, str) or value is None) and (options or display_map):
             widget = QComboBox()
