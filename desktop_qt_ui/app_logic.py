@@ -1182,6 +1182,7 @@ class MainAppLogic(QObject):
                     "4x-denoise3x": self._t("realcugan_4x_denoise3x"),
                 },
                 "translator": {
+                    "google_image_web": "Google Translate (Image/Lens)",
                     "google_web": "Google Translate (Web)",
                     "local_nllb": "Local NLLB (Offline)",
                     "openai": "OpenAI",
@@ -1251,6 +1252,9 @@ class MainAppLogic(QObject):
                     "translator": self._t("label_translator"),
                     "target_lang": self._t("label_target_lang"),
                     "keep_lang": self._t("label_keep_lang"),
+                    "google_image_crop_padding": "Google Image Crop Padding",
+                    "google_image_min_side": "Google Image Minimum Side",
+                    "google_image_fallback_to_text": "Google Image Fallback to Text",
                     "google_web_source_lang": "Google Web Source Language",
                     "google_web_browser": "Google Web Browser",
                     "google_web_headless": "Google Web Headless",
