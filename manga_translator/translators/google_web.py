@@ -138,6 +138,58 @@ class GoogleWebTranslator(CommonTranslator):
         value = re.sub(r"[ \t]+", " ", value)
         return value.strip()
 
+    @staticmethod
+    def _normalize_english_case_for_mt(text: str) -> str:
+        """Convert manga ALL-CAPS dialogue into natural sentence casing.
+
+        Google Translate can produce noticeably more literal/awkward results
+        for stylized ALL-CAPS manga dialogue than for normal prose casing.
+        Keep short one-word SFX untouched, but normalize multi-word dialogue.
+        """
+        value = str(text or "").strip()
+        letters = [ch for ch in value if ch.isalpha()]
+        if not letters:
+            return value
+
+        words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", value)
+        upper_ratio = sum(ch.isupper() for ch in letters) / len(letters)
+
+        # Avoid rewriting short SFX such as YANK, DASH, GRIN, THUD.
+        if len(words) < 2 or upper_ratio < 0.90:
+            return value
+
+        lowered = value.lower()
+
+        # Capitalize sentence starts while leaving punctuation/layout intact.
+        chars = list(lowered)
+        capitalize_next = True
+        for index, ch in enumerate(chars):
+            if capitalize_next and ch.isalpha():
+                chars[index] = ch.upper()
+                capitalize_next = False
+            if ch in ".!?":
+                capitalize_next = True
+
+        normalized = "".join(chars)
+
+        # Standalone English pronoun "I" should remain uppercase.
+        normalized = re.sub(r"\bi\b", "I", normalized)
+
+        # Common contraction after I.
+        normalized = re.sub(
+            r"\bI(['’])(m|d|ll|ve)\b",
+            lambda m: f"I{m.group(1)}{m.group(2).lower()}",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        return normalized
+
+    def _prepare_source_text(self, text: str, source_code: str) -> str:
+        value = self._normalize_ocr_text(text)
+        if source_code == "en":
+            value = self._normalize_english_case_for_mt(value)
+        return value
+
     async def _start_browser(self):
         if self._browser is not None and self._page is not None:
             return
@@ -313,25 +365,39 @@ class GoogleWebTranslator(CommonTranslator):
         return ""
 
     async def _wait_for_result(self, old_result: str) -> str:
+        """Wait for Google's target text to settle instead of taking a transient result.
+
+        Google Translate updates the result asynchronously and may expose an
+        intermediate translation before its final wording. The previous
+        implementation returned on the first DOM change, which could capture a
+        worse provisional translation than the one visible a moment later.
+        """
         deadline = time.monotonic() + (self.timeout_ms / 1000.0)
-        first_nonempty_at = None
         latest = ""
+        candidate = ""
+        candidate_since = None
+        settle_seconds = 0.85
+        identical_settle_seconds = 1.50
 
         while time.monotonic() < deadline:
             self._check_cancelled()
             latest = await self._read_result_once()
+            now = time.monotonic()
 
             if latest:
-                if latest != old_result:
-                    return latest
+                if latest != candidate:
+                    candidate = latest
+                    candidate_since = now
+                elif candidate_since is not None:
+                    required = (
+                        identical_settle_seconds
+                        if candidate == old_result
+                        else settle_seconds
+                    )
+                    if now - candidate_since >= required:
+                        return candidate
 
-                if first_nonempty_at is None:
-                    first_nonempty_at = time.monotonic()
-
-                if time.monotonic() - first_nonempty_at >= 1.25:
-                    return latest
-
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.15)
 
         if latest:
             return latest
@@ -355,7 +421,7 @@ class GoogleWebTranslator(CommonTranslator):
         target_code: str,
         text: str,
     ) -> str:
-        normalized = self._normalize_ocr_text(text)
+        normalized = self._prepare_source_text(text, source_code)
         if not normalized:
             return ""
 
