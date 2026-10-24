@@ -9,6 +9,11 @@
     "display_name": "保留原文",
     "required_env_vars": []
   },
+  "google_image_web": {
+    "name": "google_image_web",
+    "display_name": "Google Translate (Image/Lens)",
+    "required_env_vars": []
+  },
   "google_web": {
     "name": "google_web",
     "display_name": "Google Translate (Web)",
