@@ -13,6 +13,12 @@ class TranslatorSettings(BaseModel):
     translator: str = "local_nllb"
     target_lang: str = "VIN"
     keep_lang: str = "none"
+    google_web_source_lang: str = "auto"
+    google_web_browser: str = "auto"
+    google_web_headless: bool = True
+    google_web_delay_ms: int = 900
+    google_web_timeout_ms: int = 20000
+    google_web_retries: int = 2
     local_model_name: str = "facebook/nllb-200-distilled-600M"
     local_model_path: Optional[str] = None
     local_source_lang: str = "auto"
