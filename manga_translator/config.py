@@ -125,6 +125,7 @@ class Ocr(str, Enum):
     gemini_ocr = "gemini_ocr"
 
 class Translator(str, Enum):
+    google_web = "google_web"
     local_nllb = "local_nllb"
     openai = "openai"
     openai_hq = "openai_hq"
@@ -271,6 +272,20 @@ class TranslatorConfig(BaseModel):
     """Destination language"""
     keep_lang: str = 'none'
     """After text merging, keep only regions detected as this source language for later processing. Filtered regions remain unchanged. Use 'none' to disable."""
+
+    # Google Translate Web automation settings (no API key; Internet required).
+    google_web_source_lang: str = 'auto'
+    """Source language for Google Translate Web: auto, JPN, CHS, CHT, or ENG."""
+    google_web_browser: str = 'auto'
+    """Browser channel for Google Translate Web: auto, msedge, chrome, or chromium."""
+    google_web_headless: bool = True
+    """Run the automated browser without showing a window."""
+    google_web_delay_ms: int = 900
+    """Minimum delay between Google Translate Web requests."""
+    google_web_timeout_ms: int = 20000
+    """Timeout for browser navigation and translation output."""
+    google_web_retries: int = 2
+    """Retries per text region when Google Translate Web does not return a result."""
 
     # Local/offline NLLB translator settings.
     local_model_name: str = 'facebook/nllb-200-distilled-600M'
