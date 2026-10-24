@@ -13,6 +13,9 @@ class TranslatorSettings(BaseModel):
     translator: str = "local_nllb"
     target_lang: str = "VIN"
     keep_lang: str = "none"
+    google_image_crop_padding: float = 0.45
+    google_image_min_side: int = 512
+    google_image_fallback_to_text: bool = True
     google_web_source_lang: str = "auto"
     google_web_browser: str = "auto"
     google_web_headless: bool = True
