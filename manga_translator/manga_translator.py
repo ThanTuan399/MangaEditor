@@ -4926,6 +4926,29 @@ class MangaTranslator:
                             }
                             batch_original_texts.append(image_data)
                     
+                    # Google Translate Images needs the original image that owns each
+                    # region. Keep a flat list in exactly the same order as all_texts
+                    # so the browser backend can crop and map translations safely.
+                    if sample_config.translator.translator == Translator.google_image_web:
+                        google_image_items = []
+                        for source_ctx, _ in batch:
+                            if not source_ctx.text_regions:
+                                continue
+                            source_image = getattr(source_ctx, 'img_rgb', None)
+                            for region in source_ctx.text_regions:
+                                if getattr(region, 'text', None) is None:
+                                    continue
+                                google_image_items.append({
+                                    'image': source_image,
+                                    'region': region,
+                                    'text': region.text,
+                                })
+                        merged_ctx.google_image_items = google_image_items
+                        logger.debug(
+                            f"[Batch] Prepared google_image_items for "
+                            f"{len(google_image_items)} text regions"
+                        )
+
                     # ✅ 为HQ翻译器准备high_quality_batch_data（包含图片和text_regions）
                     # 这是HQ翻译器进入高质量批量模式的必要条件，也是AI断句检查能正常工作的前提
                     if sample_config.translator.translator in [Translator.openai_hq, Translator.gemini_hq]:
