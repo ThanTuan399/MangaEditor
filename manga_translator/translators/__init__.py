@@ -7,6 +7,7 @@ from ..utils import Context
 from .common import *
 from .gemini import GeminiTranslator
 from .gemini_hq import GeminiHighQualityTranslator
+from .google_web import GoogleWebTranslator
 from .local_nllb import LocalNLLBTranslator
 from .none import NoneTranslator
 from .openai import OpenAITranslator
@@ -22,6 +23,7 @@ GPT_TRANSLATORS = {
 }
 
 TRANSLATORS = {
+    Translator.google_web: GoogleWebTranslator,
     Translator.local_nllb: LocalNLLBTranslator,
     Translator.none: NoneTranslator,
     Translator.original: OriginalTranslator,
@@ -31,7 +33,7 @@ TRANSLATORS = {
 translator_cache = {}
 NON_CACHED_TRANSLATORS = {
     key for key in TRANSLATORS.keys()
-    if key not in {Translator.none, Translator.original, Translator.local_nllb}
+    if key not in {Translator.none, Translator.original, Translator.local_nllb, Translator.google_web}
 }
 
 def get_translator(key: Translator, *args, **kwargs) -> CommonTranslator:
@@ -148,7 +150,7 @@ LANGDETECT_MAP = {
 
 async def unload(key: Translator):
     translator = translator_cache.pop(key, None)
-    if key == Translator.local_nllb and translator is not None:
+    if key in {Translator.local_nllb, Translator.google_web} and translator is not None:
         await translator.unload()
     elif isinstance(translator, OfflineTranslator):
         # 参数仅为兼容 OfflineTranslator.unload(device) 签名，内部不依赖具体值。
