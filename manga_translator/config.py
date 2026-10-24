@@ -125,6 +125,7 @@ class Ocr(str, Enum):
     gemini_ocr = "gemini_ocr"
 
 class Translator(str, Enum):
+    google_image_web = "google_image_web"
     google_web = "google_web"
     local_nllb = "local_nllb"
     openai = "openai"
@@ -273,7 +274,15 @@ class TranslatorConfig(BaseModel):
     keep_lang: str = 'none'
     """After text merging, keep only regions detected as this source language for later processing. Filtered regions remain unchanged. Use 'none' to disable."""
 
-    # Google Translate Web automation settings (no API key; Internet required).
+    # Google Translate Image/Web automation settings (no API key; Internet required).
+    google_image_crop_padding: float = 0.45
+    """Extra padding around each detected text region before image translation."""
+    google_image_min_side: int = 512
+    """Upscale small region crops so Google image OCR receives a clearer image."""
+    google_image_fallback_to_text: bool = True
+    """Fall back to Google Translate text mode when image OCR/translation fails."""
+
+    # Google Translate Web text automation settings.
     google_web_source_lang: str = 'auto'
     """Source language for Google Translate Web: auto, JPN, CHS, CHT, or ENG."""
     google_web_browser: str = 'auto'
