@@ -30,3 +30,16 @@ def test_google_web_source_language_mapping():
 
     translator.source_lang = "auto"
     assert translator._configured_source_code() == "auto"
+
+
+def test_google_web_normalizes_all_caps_english_dialogue():
+    translator = GoogleWebTranslator()
+    assert (
+        translator._prepare_source_text(
+            "COME ON! LET'S GO OVER THERE!",
+            "en",
+        )
+        == "Come on! Let's go over there!"
+    )
+    assert translator._prepare_source_text("YANK", "en") == "YANK"
+    assert translator._prepare_source_text("DASH", "en") == "DASH"
