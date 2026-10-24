@@ -9,6 +9,11 @@
     "display_name": "保留原文",
     "required_env_vars": []
   },
+  "google_web": {
+    "name": "google_web",
+    "display_name": "Google Translate (Web)",
+    "required_env_vars": []
+  },
   "local_nllb": {
     "name": "local_nllb",
     "display_name": "Local NLLB (Offline)",
