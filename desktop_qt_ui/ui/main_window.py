@@ -170,6 +170,12 @@ class MainWindow(FluentWindow):
                 self._t("Rich Text Rules"),
             ),
             (
+                "ocr_workspace",
+                self.main_view.ocr_workspace_page,
+                FIF.DOCUMENT,
+                self._t("OCR Workspace"),
+            ),
+            (
                 "batch_edit",
                 self.main_view.batch_edit_page,
                 FIF.LIBRARY,
@@ -221,6 +227,9 @@ class MainWindow(FluentWindow):
         elif page_key == "rich_text_rules":
             if hasattr(self.main_view, "rich_text_rules_editor_panel"):
                 self.main_view.rich_text_rules_editor_panel.refresh()
+        elif page_key == "ocr_workspace":
+            if hasattr(self.main_view, "ocr_workspace_panel"):
+                self.main_view.ocr_workspace_panel.refresh_sources()
         elif page_key == "batch_edit":
             if hasattr(self.main_view, "batch_edit_panel"):
                 self.main_view.batch_edit_panel.set_catalog_snapshot(
