@@ -26,6 +26,7 @@ from ui.main_page.pages.about_page import (
 )
 from ui.main_page.pages.batch_edit_page import create_batch_edit_page
 from ui.main_page.pages.env_page import create_env_page
+from ui.main_page.pages.ocr_workspace_page import create_ocr_workspace_page
 from ui.main_page.pages.prompt_page import create_prompt_page
 from ui.main_page.pages.replacements_page import create_replacements_page
 from ui.main_page.pages.rich_text_rules_page import create_rich_text_rules_page
@@ -74,6 +75,7 @@ class MainView(QObject):
     _on_about_branch_changed = _on_about_branch_changed
     _on_about_system_proxy_changed = _on_about_system_proxy_changed
     _create_env_page = create_env_page
+    _create_ocr_workspace_page = create_ocr_workspace_page
     _create_prompt_page = create_prompt_page
     _refresh_prompt_manager = layout_parts.refresh_prompt_manager
     _apply_selected_prompt = layout_parts.apply_selected_prompt
@@ -154,6 +156,7 @@ class MainView(QObject):
         self.prompt_page = self._create_prompt_page()
         self.replacements_page = self._create_replacements_page()
         self.rich_text_rules_page = self._create_rich_text_rules_page()
+        self.ocr_workspace_page = self._create_ocr_workspace_page()
         self.batch_edit_page = self._create_batch_edit_page()
         self.page_widgets = {
             "translation": self.translation_interface,
@@ -163,6 +166,7 @@ class MainView(QObject):
             "prompts": self.prompt_page,
             "replacements": self.replacements_page,
             "rich_text_rules": self.rich_text_rules_page,
+            "ocr_workspace": self.ocr_workspace_page,
             "batch_edit": self.batch_edit_page,
         }
         # 不在这里调用 _create_dynamic_settings，等待 app_logic.initialize 发送 config_loaded 信号
@@ -291,6 +295,8 @@ class MainView(QObject):
             self.replacements_editor_panel.apply_theme()
         if hasattr(self, "rich_text_rules_editor_panel") and self.rich_text_rules_editor_panel:
             self.rich_text_rules_editor_panel.apply_theme()
+        if hasattr(self, "ocr_workspace_panel") and self.ocr_workspace_panel:
+            self.ocr_workspace_panel.apply_theme()
         if hasattr(self, "batch_edit_panel") and self.batch_edit_panel:
             self.batch_edit_panel.apply_theme()
         if hasattr(self, "settings_page") and self.settings_page:
@@ -520,6 +526,15 @@ class MainView(QObject):
         if hasattr(self, "rich_text_rules_editor_panel"):
             self.rich_text_rules_editor_panel.refresh_ui_texts()
 
+        if hasattr(self, "ocr_workspace_page_title_label"):
+            self.ocr_workspace_page_title_label.setText(self._t("OCR Workspace"))
+        if hasattr(self, "ocr_workspace_page_subtitle_label"):
+            self.ocr_workspace_page_subtitle_label.setText(
+                self._t(
+                    "Fast manual-translation workspace: scan OCR only, copy text to any external translator, "
+                    "paste/edit translations, compare against the raw page, and export text in batches."
+                )
+            )
         if hasattr(self, "batch_edit_page_title_label"):
             self.batch_edit_page_title_label.setText(self._t("Batch Management"))
         if hasattr(self, "batch_edit_page_subtitle_label"):
