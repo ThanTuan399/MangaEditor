@@ -2018,6 +2018,80 @@ class MainAppLogic(QObject):
         )
         self.start_file_scanning(task_config)
 
+    def start_ocr_workspace_render(self):
+        """Render all OCR Workspace JSON translations without translating again."""
+        if self.state_manager.is_translating():
+            self._ui_log("A task is already running.", "WARNING")
+            return
+
+        self._stop_requested = False
+        self._scan_future = None if self._scan_future and self._scan_future.done() else self._scan_future
+        self._translate_future = (
+            None if self._translate_future and self._translate_future.done() else self._translate_future
+        )
+        self._cleanup_future = (
+            None if self._cleanup_future and self._cleanup_future.done() else self._cleanup_future
+        )
+        if any(
+            future is not None and not future.done()
+            for future in (self._scan_future, self._translate_future, self._cleanup_future)
+        ):
+            self._ui_log(
+                "The previous task is still finishing in the background. Please try again later.",
+                "WARNING",
+            )
+            return
+
+        if not self.source_files:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                None,
+                self._t("File List Empty"),
+                self._t("Please add image files first."),
+            )
+            return
+
+        config = self.config_service.get_config()
+        task_config = config.model_dump()
+        cli = task_config.setdefault("cli", {})
+
+        for key in (
+            "translate_json_only",
+            "template",
+            "generate_and_export",
+            "colorize_only",
+            "upscale_only",
+            "inpaint_only",
+            "replace_translation",
+            "export_from_local_json",
+        ):
+            cli[key] = False
+
+        # Existing JSON is the source of truth. Load it and render only.
+        cli["ocr_workspace_scan"] = False
+        cli["load_text"] = True
+        cli["save_text"] = False
+        cli["overwrite"] = True
+
+        # Translation must never be called in this workflow.
+        task_config.setdefault("translator", {})["translator"] = "none"
+
+        # Keep the output as close to raw as possible and avoid unrelated work.
+        task_config.setdefault("colorizer", {})["colorizer"] = "none"
+        task_config.setdefault("upscale", {})["upscale_ratio"] = None
+
+        output_path = task_config.setdefault("app", {}).get("last_output_path")
+        if not output_path or not os.path.isdir(output_path):
+            output_path = os.path.join(self.config_service.root_dir, "result")
+            os.makedirs(output_path, exist_ok=True)
+            task_config["app"]["last_output_path"] = output_path
+
+        self._ui_log(
+            "OCR Workspace render started: Load JSON -> Inpaint -> Typeset -> Export "
+            "(OCR and translation disabled)."
+        )
+        self.start_file_scanning(task_config)
+
     def start_backend_task(self):
         """
         Resolves input paths and uses a 'Worker-to-Thread' model to start the translation task.
