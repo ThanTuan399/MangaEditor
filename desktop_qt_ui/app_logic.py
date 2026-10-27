@@ -1931,6 +1931,93 @@ class MainAppLogic(QObject):
         self.state_manager.set_translating(True)
         self.state_manager.set_status_message("正在翻译...")
 
+    def start_ocr_workspace_scan(self):
+        """Run the existing detector/OCR pipeline in the fastest project-data-only mode.
+
+        This is intentionally independent from the normal workflow selector. It
+        snapshots the current settings, disables translation/colorization/upscale/
+        inpainting work, and asks MangaTranslator to stop immediately after
+        detection + OCR + textline merge + project JSON save.
+        """
+        if self.state_manager.is_translating():
+            self._ui_log("An OCR task is already running.", "WARNING")
+            return
+
+        self._stop_requested = False
+        self._scan_future = None if self._scan_future and self._scan_future.done() else self._scan_future
+        self._translate_future = (
+            None if self._translate_future and self._translate_future.done() else self._translate_future
+        )
+        self._cleanup_future = (
+            None if self._cleanup_future and self._cleanup_future.done() else self._cleanup_future
+        )
+        if any(
+            future is not None and not future.done()
+            for future in (self._scan_future, self._translate_future, self._cleanup_future)
+        ):
+            self._ui_log(
+                "The previous task is still finishing in the background. Please try again later.",
+                "WARNING",
+            )
+            return
+
+        if not self.source_files:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                None,
+                self._t("File List Empty"),
+                self._t("Please add image files first."),
+            )
+            return
+
+        config = self.config_service.get_config()
+        task_config = config.model_dump()
+
+        # OCR Workspace must never require API credentials or start unrelated
+        # expensive models. Keep detector/OCR exactly as configured by the user.
+        cli = task_config.setdefault("cli", {})
+        for key in (
+            "load_text",
+            "translate_json_only",
+            "template",
+            "generate_and_export",
+            "colorize_only",
+            "upscale_only",
+            "inpaint_only",
+            "replace_translation",
+            "export_from_local_json",
+        ):
+            cli[key] = False
+        cli["save_text"] = True
+        cli["ocr_workspace_scan"] = True
+        cli["overwrite"] = True
+
+        translator_cfg = task_config.setdefault("translator", {})
+        translator_cfg["translator"] = "none"
+
+        colorizer_cfg = task_config.setdefault("colorizer", {})
+        colorizer_cfg["colorizer"] = "none"
+
+        upscale_cfg = task_config.setdefault("upscale", {})
+        upscale_cfg["upscale_ratio"] = None
+
+        inpainter_cfg = task_config.setdefault("inpainter", {})
+        inpainter_cfg["inpainter"] = "none"
+
+        # The worker infrastructure expects an output directory even though this
+        # mode writes project JSON beside MangaEditor's normal project data.
+        output_path = task_config.setdefault("app", {}).get("last_output_path")
+        if not output_path or not os.path.isdir(output_path):
+            output_path = os.path.join(self.config_service.root_dir, "result")
+            os.makedirs(output_path, exist_ok=True)
+            task_config["app"]["last_output_path"] = output_path
+
+        self._ui_log(
+            "OCR Workspace scan started: Detection -> OCR -> Merge -> Save JSON "
+            "(translation/inpainting/rendering disabled)."
+        )
+        self.start_file_scanning(task_config)
+
     def start_backend_task(self):
         """
         Resolves input paths and uses a 'Worker-to-Thread' model to start the translation task.
@@ -3006,7 +3093,10 @@ class TranslationWorker(QObject):
             workflow_mode = 'Normal Translation'
             workflow_tip = ""
             cli_config = self.config_dict.get('cli', {})
-            if cli_config.get('upscale_only', False):
+            if cli_config.get('ocr_workspace_scan', False):
+                workflow_mode = 'OCR Workspace Scan'
+                workflow_tip = 'Tip: Detection + OCR + text merge + project JSON only; translation, inpainting and rendering are disabled'
+            elif cli_config.get('upscale_only', False):
                 workflow_mode = 'Upscale Only'
                 workflow_tip = 'Tip: Only upscale images, no detection, OCR, translation or rendering'
             elif cli_config.get('colorize_only', False):
