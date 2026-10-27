@@ -721,6 +721,8 @@ class MainWindow(FluentWindow):
     def _should_prompt_open_results_in_editor(self) -> bool:
         """Only prompt for workflows that produce editor-meaningful results."""
         try:
+            if getattr(self.app_logic, "last_completed_workflow", None) == "ocr_workspace_scan":
+                return False
             config = self.config_service.get_config()
             cli = getattr(config, "cli", None)
             if cli is None:
@@ -884,6 +886,7 @@ class MainWindow(FluentWindow):
             "prompts": self._t("Prompt Management"),
             "replacements": self._t("Replacement Rules"),
             "rich_text_rules": self._t("Rich Text Rules"),
+            "ocr_workspace": self._t("OCR Workspace"),
             "batch_edit": self._t("Batch Management"),
         }
         for key, text in nav_labels.items():
