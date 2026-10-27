@@ -457,6 +457,7 @@ class MangaTranslator:
         self.inpaint_only = params.get('inpaint_only', False)
         # Fast manual OCR workspace: detection + OCR + merge + JSON only.
         self.ocr_workspace_scan = params.get('ocr_workspace_scan', False)
+        self.ocr_workspace_render = params.get('ocr_workspace_render', False)
         
         # 替换翻译模式（从已翻译图片复制翻译数据到生肉图片）
         self.replace_translation = params.get('replace_translation', False)
@@ -3638,9 +3639,13 @@ class MangaTranslator:
             )
             return plan.merge_results(contexts)
 
-        if self.load_text:
+        if self.load_text and not self.ocr_workspace_render:
             logger.info("Load text mode detected: Auto-importing translations from TXT to JSON...")
             self._preprocess_load_text_mode(images_with_configs)
+        elif self.load_text and self.ocr_workspace_render:
+            logger.info(
+                "OCR Workspace render: using project JSON directly; stale TXT import is disabled."
+            )
 
         if self.replace_translation:
             logger.info("Replace translation mode detected: Will extract translations from translated images")
