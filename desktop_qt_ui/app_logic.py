@@ -156,6 +156,7 @@ class MainAppLogic(QObject):
         self._last_progress_log_at = 0.0
         self._task_failures: List[Dict[str, str]] = []
         self._task_failure_keys: set[str] = set()
+        self.last_completed_workflow: Optional[str] = None
 
         self.source_files: List[str] = [] # Holds both files and folders
         self._source_folders: Dict[str, str] = {}
@@ -1990,6 +1991,7 @@ class MainAppLogic(QObject):
             cli[key] = False
         cli["save_text"] = True
         cli["ocr_workspace_scan"] = True
+        cli["ocr_workspace_render"] = False
         cli["overwrite"] = True
 
         translator_cfg = task_config.setdefault("translator", {})
@@ -2012,6 +2014,7 @@ class MainAppLogic(QObject):
             os.makedirs(output_path, exist_ok=True)
             task_config["app"]["last_output_path"] = output_path
 
+        self.last_completed_workflow = "ocr_workspace_scan"
         self._ui_log(
             "OCR Workspace scan started: Detection -> OCR -> Merge -> Save JSON "
             "(translation/inpainting/rendering disabled)."
@@ -2069,6 +2072,7 @@ class MainAppLogic(QObject):
 
         # Existing JSON is the source of truth. Load it and render only.
         cli["ocr_workspace_scan"] = False
+        cli["ocr_workspace_render"] = True
         cli["load_text"] = True
         cli["save_text"] = False
         cli["overwrite"] = True
@@ -2086,6 +2090,7 @@ class MainAppLogic(QObject):
             os.makedirs(output_path, exist_ok=True)
             task_config["app"]["last_output_path"] = output_path
 
+        self.last_completed_workflow = "ocr_workspace_render"
         self._ui_log(
             "OCR Workspace render started: Load JSON -> Inpaint -> Typeset -> Export "
             "(OCR and translation disabled)."
