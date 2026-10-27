@@ -2101,7 +2101,8 @@ class MainAppLogic(QObject):
         """
         Resolves input paths and uses a 'Worker-to-Thread' model to start the translation task.
         """
-        # 检查是否有任务在运行
+        self.last_completed_workflow = "normal"
+        # 检查是否有任务 在运行
         if self.state_manager.is_translating():
             self._ui_log("A task is already running.", "WARNING")
             return
