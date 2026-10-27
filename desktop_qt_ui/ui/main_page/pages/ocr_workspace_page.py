@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QBrush, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QFileDialog,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
@@ -224,8 +225,8 @@ class OCRWorkspacePanel(QWidget):
         self.table.setHorizontalHeaderLabels(["#", self._t("Original OCR"), self._t("Translation")])
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
