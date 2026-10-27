@@ -455,6 +455,8 @@ class MangaTranslator:
         self.colorize_only = params.get('colorize_only', False)
         self.upscale_only = params.get('upscale_only', False)
         self.inpaint_only = params.get('inpaint_only', False)
+        # Fast manual OCR workspace: detection + OCR + merge + JSON only.
+        self.ocr_workspace_scan = params.get('ocr_workspace_scan', False)
         
         # 替换翻译模式（从已翻译图片复制翻译数据到生肉图片）
         self.replace_translation = params.get('replace_translation', False)
@@ -3652,7 +3654,8 @@ class MangaTranslator:
 
         is_template_save_mode = self.template and self.save_text
         has_incompatible_mode = (
-            self.load_text
+            self.ocr_workspace_scan
+            or self.load_text
             or self.translate_json_only
             or is_template_save_mode
             or self.generate_and_export
@@ -3668,7 +3671,7 @@ class MangaTranslator:
         if first_config and hasattr(first_config.translator, 'translator'):
             translator_type = first_config.translator.translator
             is_hq_translator = translator_type in [Translator.openai_hq, Translator.gemini_hq]
-            is_import_export_mode = self.load_text or self.template or self.translate_json_only
+            is_import_export_mode = self.ocr_workspace_scan or self.load_text or self.template or self.translate_json_only
             if is_hq_translator and not is_import_export_mode and not effective_batch_concurrent:
                 logger.info(f"Detected high-quality translator {translator_type}; enabling high-quality translation mode")
                 contexts = await self._translate_batch_high_quality(
@@ -3692,6 +3695,8 @@ class MangaTranslator:
 
         if self.batch_concurrent and has_incompatible_mode:
             incompatible_modes = []
+            if self.ocr_workspace_scan:
+                incompatible_modes.append("OCR workspace scan")
             if self.load_text:
                 incompatible_modes.append("load translation")
             if self.translate_json_only:
@@ -4338,6 +4343,9 @@ class MangaTranslator:
                     mode_name = "Colorize Only" if self.colorize_only else ("Upscale Only" if self.upscale_only else "Inpaint Only")
                     logger.info(f"{mode_name} mode: Skipping translation and rendering stages.")
                     translated_contexts = preprocessed_contexts
+                elif self.ocr_workspace_scan:
+                    logger.info("OCR Workspace mode: Skipping translation.")
+                    translated_contexts = preprocessed_contexts
                 elif is_template_save_mode:
                     # 特殊情况：导出原文模式，跳过翻译
                     logger.info("Template+SaveText mode: Skipping translation, will export original text only.")
@@ -4351,6 +4359,34 @@ class MangaTranslator:
                         raise
 
                 # --- 阶段3: 渲染和保存 ---
+                # Fast OCR Workspace: only persist detected OCR regions. Do not
+                # refine masks, translate, inpaint, render, or create template TXT.
+                if self.ocr_workspace_scan:
+                    logger.info("OCR Workspace mode: Saving project JSON without mask refinement or rendering.")
+                    for ctx, config in translated_contexts:
+                        if getattr(ctx, 'translation_error', None):
+                            results.append(ctx)
+                            await report_completed_image_progress()
+                            continue
+
+                        image_name = getattr(ctx, 'image_name', None)
+                        if image_name:
+                            self._save_text_to_file(image_name, ctx, config)
+                            ctx.output_path = find_json_path(image_name)
+                        ctx.success = True
+                        results.append(ctx)
+                        await report_completed_image_progress()
+                        self._cleanup_context_memory(ctx, keep_result=True)
+
+                    if current_batch_images:
+                        for image, _ in current_batch_images:
+                            if hasattr(image, 'close'):
+                                try:
+                                    image.close()
+                                except Exception:
+                                    pass
+                    continue
+
                 # 特殊情况：导出原文模式（跳过渲染，只保存JSON和导出原文）
                 if is_template_save_mode:
                     logger.info("Template+SaveText mode: Skipping rendering, exporting original text only.")
@@ -4498,7 +4534,7 @@ class MangaTranslator:
             await asyncio.sleep(0)
             self._check_cancelled()
             
-            if config.upscale.upscale_ratio:
+            if not self.ocr_workspace_scan and config.upscale.upscale_ratio:
                 # 传递超分配置参数
                 upscaler_kwargs = {}
                 if config.upscale.upscaler == 'realcugan':
@@ -4522,13 +4558,13 @@ class MangaTranslator:
             await prepare_detection(config.detector.detector)
             
             await prepare_ocr(config.ocr.ocr, self.device)
-            
-            await prepare_inpainting(config.inpainter.inpainter, self.device)
-            
-            await prepare_translation(config.translator.translator_gen)
-            
-            if config.colorizer.colorizer != Colorizer.none:
-                await prepare_colorization(config.colorizer.colorizer)
+
+            if not self.ocr_workspace_scan:
+                await prepare_inpainting(config.inpainter.inpainter, self.device)
+                await prepare_translation(config.translator.translator_gen)
+                
+                if config.colorizer.colorizer != Colorizer.none:
+                    await prepare_colorization(config.colorizer.colorizer)
             
             self._models_loaded = True  # 标记模型已加载
 
@@ -4541,7 +4577,7 @@ class MangaTranslator:
         self._check_cancelled()
 
         # -- Colorization
-        if config.colorizer.colorizer != Colorizer.none:
+        if not self.ocr_workspace_scan and config.colorizer.colorizer != Colorizer.none:
             await self._report_progress('colorizing')
             try:
                 ctx.img_colorized = await self._run_colorizer(config, ctx)
@@ -4564,7 +4600,7 @@ class MangaTranslator:
             return ctx
 
         # -- Upscaling
-        if config.upscale.upscale_ratio:
+        if not self.ocr_workspace_scan and config.upscale.upscale_ratio:
             # ✅ 检查停止标志
             await asyncio.sleep(0)
             self._check_cancelled()
