@@ -176,7 +176,7 @@ class OCRWorkspacePanel(QWidget):
         self.add_folder_button = PushButton(self._t("Add Folder"))
         self.add_folder_button.setIcon(FIF.FOLDER_ADD)
         self.scan_button = PrimaryPushButton(self._t("Scan OCR Only"))
-        self.scan_button.setIcon(FIF.SEARCH)
+        self.scan_button.setIcon(FIF.DOCUMENT)
         self.refresh_button = PushButton(self._t("Refresh"))
         self.refresh_button.setIcon(FIF.SYNC)
 
@@ -194,12 +194,14 @@ class OCRWorkspacePanel(QWidget):
         self.paste_batch_button = PushButton(self._t("Paste Batch"))
         self.save_button = PrimaryPushButton(self._t("Save JSON"))
         self.export_button = PushButton(self._t("Export Batch TXT"))
+        self.render_batch_button = PushButton(self._t("Render Batch"))
 
         toolbar_layout.addWidget(self.copy_all_button)
         toolbar_layout.addWidget(self.copy_selected_button)
         toolbar_layout.addWidget(self.paste_batch_button)
         toolbar_layout.addWidget(self.save_button)
         toolbar_layout.addWidget(self.export_button)
+        toolbar_layout.addWidget(self.render_batch_button)
         root.addWidget(toolbar)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -283,6 +285,7 @@ class OCRWorkspacePanel(QWidget):
         self.paste_batch_button.clicked.connect(self.paste_batch_from_clipboard)
         self.save_button.clicked.connect(self.save_current)
         self.export_button.clicked.connect(self.export_batch_txt)
+        self.render_batch_button.clicked.connect(self._render_batch)
 
         self.controller.file_sources_changed.connect(self.refresh_sources)
         self.controller.task_completed.connect(self._on_task_completed)
@@ -290,6 +293,7 @@ class OCRWorkspacePanel(QWidget):
 
     def _on_busy_changed(self, busy: bool):
         self.scan_button.setEnabled(not busy)
+        self.render_batch_button.setEnabled(not busy)
         self.scan_button.setText(
             self._t("Scanning OCR...") if busy else self._t("Scan OCR Only")
         )
@@ -650,6 +654,13 @@ class OCRWorkspacePanel(QWidget):
                     self._t("Failed to save project JSON: {error}", error=str(exc)),
                 )
             return False
+
+
+    def _render_batch(self):
+        if self._dirty:
+            if not self.save_current(silent=True):
+                return
+        self.controller.start_ocr_workspace_render()
 
     def export_batch_txt(self):
         if self._dirty:
