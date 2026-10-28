@@ -342,6 +342,9 @@ class OCRWorkspacePanel(QWidget):
         return result
 
     def refresh_sources(self):
+        # UI refreshes and folder changes must not discard unsaved edits.
+        if self._dirty and not self.save_current():
+            return
         previous = self.current_image_path
         self.image_paths = self._collect_source_images()
 
@@ -371,6 +374,8 @@ class OCRWorkspacePanel(QWidget):
             )
 
     def _on_task_completed(self, _paths):
+        if self._dirty and not self.save_current():
+            return
         self.refresh_sources()
         if self.current_image_path:
             self.load_page(self.current_image_path, force=True)
@@ -378,8 +383,14 @@ class OCRWorkspacePanel(QWidget):
     def _on_page_changed(self, index: int):
         if index < 0 or index >= len(self.image_paths):
             return
-        if self._dirty:
-            self.save_current(silent=True)
+        if self._dirty and not self.save_current():
+            # Keep the selected page and unsaved text intact when disk write fails.
+            previous_index = self.image_paths.index(self.current_image_path) if self.current_image_path in self.image_paths else -1
+            if previous_index >= 0:
+                self.page_combo.blockSignals(True)
+                self.page_combo.setCurrentIndex(previous_index)
+                self.page_combo.blockSignals(False)
+            return
         self.load_page(self.image_paths[index])
 
     def _clear_page(self):
@@ -581,6 +592,31 @@ class OCRWorkspacePanel(QWidget):
             return
 
         parsed = self._parse_batch_translation(raw)
+        # Without explicit [001] markers, only an exact one-line-per-region
+        # match is safe. Partial imports would silently shift character dialog.
+        if isinstance(parsed, list) and len(parsed) != len(self.current_regions):
+            QMessageBox.warning(
+                self,
+                self._t("Paste Batch"),
+                self._t(
+                    "Pasted {count} unnumbered lines, but this page has {regions} regions. "
+                    "Nothing was changed. Keep [001] markers or paste exactly one line per region.",
+                    count=len(parsed), regions=len(self.current_regions),
+                ),
+            )
+            return
+        if isinstance(parsed, dict):
+            invalid_indices = [idx for idx in parsed if not 0 <= idx < len(self.current_regions)]
+            if invalid_indices:
+                QMessageBox.warning(
+                    self,
+                    self._t("Paste Batch"),
+                    self._t(
+                        "Some [ID] markers do not match this page. Nothing was changed. "
+                        "Keep the original [001], [002] markers for the current page."
+                    ),
+                )
+                return
         applied = 0
 
         self._loading_table = True
@@ -658,14 +694,13 @@ class OCRWorkspacePanel(QWidget):
 
 
     def _render_batch(self):
-        if self._dirty:
-            if not self.save_current(silent=True):
-                return
+        if self._dirty and not self.save_current():
+            return
         self.controller.start_ocr_workspace_render()
 
     def export_batch_txt(self):
-        if self._dirty:
-            self.save_current(silent=True)
+        if self._dirty and not self.save_current():
+            return
 
         config = self.controller.config_service.get_config()
         initial_dir = config.app.last_output_path or self.controller.config_service.root_dir
