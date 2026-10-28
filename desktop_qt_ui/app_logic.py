@@ -1974,6 +1974,26 @@ class MainAppLogic(QObject):
         config = self.config_service.get_config()
         task_config = config.model_dump()
 
+        # External translators are deliberately disabled in this mode.
+        # Also stop accidental OpenAI/Gemini OCR calls when a cloud OCR backend
+        # was left selected in normal Settings.
+        ocr_config = task_config.get("ocr", {})
+        api_ocr = {"openai_ocr", "gemini_ocr"}
+        primary_ocr = str(ocr_config.get("ocr", "")).lower()
+        secondary_ocr = str(ocr_config.get("secondary_ocr", "")).lower()
+        if primary_ocr in api_ocr or (
+            ocr_config.get("use_hybrid_ocr") and secondary_ocr in api_ocr
+        ):
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                None,
+                "OCR Workspace",
+                "Chế độ OCR nhanh không sử dụng API. "
+                "Hãy vào Settings -> OCR chọn model cục bộ "
+                "(ví dụ mocr, 48px hoặc PaddleOCR), rồi quét lại.",
+            )
+            return
+
         # OCR Workspace must never require API credentials or start unrelated
         # expensive models. Keep detector/OCR exactly as configured by the user.
         cli = task_config.setdefault("cli", {})
