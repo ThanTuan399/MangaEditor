@@ -34,3 +34,49 @@ def test_ocr_workspace_region_rect_from_saved_lines():
     assert rect.y() == 20.0
     assert rect.width() == 45.0
     assert rect.height() == 32.0
+
+
+def test_ocr_workspace_widget_constructs():
+    """Catch Qt wiring/runtime errors that a plain import test cannot see."""
+    from PyQt6.QtCore import QObject, pyqtSignal
+    from PyQt6.QtWidgets import QApplication
+    from desktop_qt_ui.ui.main_page.pages.ocr_workspace_page import OCRWorkspacePanel
+
+    class FakeState(QObject):
+        is_translating_changed = pyqtSignal(bool)
+
+    class FakeController(QObject):
+        file_sources_changed = pyqtSignal()
+        task_completed = pyqtSignal(list)
+
+        def __init__(self):
+            super().__init__()
+            self.state_manager = FakeState()
+            self.source_files = []
+
+        def add_folder(self):
+            pass
+
+        def start_ocr_workspace_scan(self):
+            pass
+
+        def start_ocr_workspace_render(self):
+            pass
+
+        def add_files(self, _files):
+            pass
+
+        def get_last_open_dir(self):
+            return "."
+
+        def set_last_open_dir(self, _path):
+            pass
+
+    app = QApplication.instance() or QApplication([])
+    controller = FakeController()
+    panel = OCRWorkspacePanel(controller, t_func=lambda key, **k: key.format(**k))
+    assert panel.splitter.count() == 2
+    assert panel.table.columnCount() == 3
+    assert panel.scan_button.isEnabled()
+    panel.close()
+    app.processEvents()
