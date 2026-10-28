@@ -4327,6 +4327,24 @@ class MangaTranslator:
                     await asyncio.sleep(0)
                     self._check_cancelled()  # 检查取消标志
                     try:
+                        # OCR Workspace never overwrites existing project data.
+                        # Existing translations may have been edited manually.
+                        if self.ocr_workspace_scan:
+                            original_path = getattr(image, 'name', None)
+                            existing_path = find_json_path(original_path) if original_path else None
+                            if existing_path and os.path.isfile(existing_path):
+                                ctx = Context()
+                                ctx.input = image
+                                ctx.image_name = original_path
+                                ctx.text_regions = []
+                                ctx.ocr_workspace_existing_json = existing_path
+                                preprocessed_contexts.append((ctx, config))
+                                logger.info(
+                                    "OCR Workspace: preserved existing JSON for %s; "
+                                    "skipping OCR to protect manual edits",
+                                    os.path.basename(original_path),
+                                )
+                                continue
                         self._set_image_context(config, image)
                         # ✅ 保存context以便渲染阶段复用，避免生成两个文件夹
                         from .utils.generic import get_image_md5
@@ -4375,10 +4393,24 @@ class MangaTranslator:
                             continue
 
                         image_name = getattr(ctx, 'image_name', None)
-                        if image_name:
-                            self._save_text_to_file(image_name, ctx, config)
+                        preserved_json = getattr(ctx, 'ocr_workspace_existing_json', None)
+                        if preserved_json:
+                            ctx.output_path = preserved_json
+                            ctx.success = True
+                        elif not image_name:
+                            self._mark_context_failure(
+                                ctx, ValueError("OCR Workspace image path unavailable"),
+                                stage='ocr_workspace_save'
+                            )
+                        elif self._save_text_to_file(image_name, ctx, config):
                             ctx.output_path = find_json_path(image_name)
-                        ctx.success = True
+                            ctx.success = True
+                        else:
+                            self._mark_context_failure(
+                                ctx,
+                                OSError("Failed to save OCR Workspace project JSON"),
+                                stage='ocr_workspace_save',
+                            )
                         results.append(ctx)
                         await report_completed_image_progress()
                         self._cleanup_context_memory(ctx, keep_result=True)
