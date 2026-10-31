@@ -12,7 +12,7 @@ import socket
 from typing import List
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from .common import CommonTranslator
 
@@ -88,8 +88,11 @@ class LocalHyMT2Translator(CommonTranslator):
             method=method,
             headers={"Content-Type": "application/json; charset=utf-8"},
         )
+        # Bypass system HTTP proxies for the loopback server.
+        # This keeps manga text local even when Windows has a proxy configured.
+        opener = build_opener(ProxyHandler({}))
         try:
-            with urlopen(req, timeout=self.timeout) as response:
+            with opener.open(req, timeout=self.timeout) as response:
                 result = json.load(response)
         except HTTPError as exc:
             detail = exc.read(500).decode("utf-8", errors="replace")
