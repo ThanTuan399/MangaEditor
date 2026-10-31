@@ -66,7 +66,7 @@ def local_server_port(api_base: str) -> int | None:
             or parsed.fragment
         ):
             return None
-        port = parsed.port or 80
+        port = parsed.port if parsed.port is not None else 80
         if not 1 <= port <= 65535:
             return None
         return port
