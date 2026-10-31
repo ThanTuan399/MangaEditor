@@ -403,6 +403,30 @@ def main():
     # 且是启动阶段窗口闪烁的来源
     QTimer.singleShot(0, finalize_window_activation)
 
+    # Start local Hy-MT2 in the background when the selected translator needs it.
+    # This also covers launching main.py directly without Win-Start.bat.
+    if sys.platform == "win32":
+        try:
+            from services import get_config_service
+            from utils.local_hymt2_autostart import LocalHyMT2ServerManager
+
+            hymt2_manager = LocalHyMT2ServerManager(root_dir)
+            config_service = get_config_service()
+
+            def ensure_hymt2(_changed_config=None):
+                if config_service is not None:
+                    try:
+                        hymt2_manager.ensure_async(config_service.get_config())
+                    except Exception:
+                        logging.exception("Unable to schedule local Hy-MT2 startup")
+
+            if config_service is not None:
+                config_service.config_changed.connect(ensure_hymt2)
+                QTimer.singleShot(0, ensure_hymt2)
+            app.aboutToQuit.connect(hymt2_manager.stop)
+        except Exception:
+            logging.exception("Unable to initialize optional Hy-MT2 auto-start")
+
     # 4. 启动事件循环
     ret = app.exec()
 

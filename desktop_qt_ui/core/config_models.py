@@ -218,6 +218,7 @@ class AppSection(BaseModel):
     theme_user_preference: str = "light"
     ui_language: str = "auto"  # UI语言：auto(自动检测), zh_CN, en_US, ja_JP, ko_KR 等
     auto_check_updates: bool = True  # 启动时是否自动检查新版本
+    auto_start_hymt2: bool = True  # 自动启动当前选择的 Hy-MT2 本地服务
     use_system_proxy: bool = False  # 网络请求是否使用操作系统代理配置
     current_preset: str = "默认"  # 当前使用的预设名称
     editor_ocr: str = "mocr"  # 编辑器属性面板使用的 OCR 模型，与主页 OCR 设置分离

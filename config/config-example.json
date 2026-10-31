@@ -8,6 +8,7 @@
     "theme_user_preference": "light",
     "ui_language": "auto",
     "auto_check_updates": true,
+    "auto_start_hymt2": true,
     "use_system_proxy": true,
     "current_preset": "默认",
     "editor_ocr": "mocr",

@@ -1278,6 +1278,7 @@ class MainAppLogic(QObject):
                     "hymt_timeout_seconds": "Hy-MT2 Timeout (seconds)",
                     "hymt_max_output_tokens": "Hy-MT2 Max Output Tokens",
                     "hymt_context_regions": "Hy-MT2 Previous OCR Regions (0=off)",
+                    "auto_start_hymt2": "Auto Start Hy-MT2 With MangaEditor",
                     "enable_streaming": self._t("label_enable_streaming"),
                     "no_text_lang_skip": self._t("label_no_text_lang_skip"),
                     "high_quality_prompt_path": self._t("label_high_quality_prompt_path"),

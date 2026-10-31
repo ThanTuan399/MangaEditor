@@ -20,13 +20,15 @@ Nếu tải mới, trên trang GitHub chọn nhánh **NewMangaEditor** rồi **C
 winget install llama.cpp
 ```
 
-Trên Windows, bấm đúp **Win-Start-HyMT2.bat** ở thư mục gốc dự án. Launcher tự tìm `llama-server.exe` trong PATH **hoặc** WinGet Packages (tránh lỗi 'llama-server is not recognized'). Mặc định chạy:
+**Cách sử dụng mới:** Chỉ cần mở **Win-Start.bat** để chạy MangaEditor. Khi đã chọn bộ dịch `local_hymt2` và bật tùy chọn `Auto Start Hy-MT2 With MangaEditor` (mặc định bật), ứng dụng tự tìm và bật `llama-server.exe` trong nền. Không cần mở cửa sổ server trước. Khi đóng app, ứng dụng dừng server do chính nó khởi chạy; server bạn mở sẵn bằng tay không bị tắt.
+
+Nếu muốn chạy server thủ công để kiểm tra, bấm đúp **Win-Start-HyMT2.bat** ở thư mục gốc dự án. Launcher tự tìm `llama-server.exe` trong PATH **hoặc** WinGet Packages (tránh lỗi 'llama-server is not recognized'). Mặc định chạy:
 
 ```powershell
 llama-server -hf tencent/Hy-MT2-1.8B-GGUF:Q4_K_M --port 8080
 ```
 
-Lần đầu cần Internet để tải model từ Hugging Face. Khi file GGUF đã có, model và server có thể hoạt động offline. Hãy đợi log server cho biết đã lắng nghe cổng 8080 và **giữ cửa sổ này mở**.
+Lần đầu cần Internet để tải model từ Hugging Face. Khi file GGUF đã có, model và server có thể hoạt động offline. Nếu chạy thủ công thì giữ cửa sổ server mở. Nếu chạy qua MangaEditor, server chạy nền, log nằm ở `result/hymt2-server.log` và không chặn quá trình khởi động giao diện. Có thể phải đợi model nạp trước khi dịch lần đầu.
 
 Nếu server cổng 8080 đã chạy, không mở server lần hai. Nếu cần cổng khác:
 
@@ -38,7 +40,7 @@ Nếu server cổng 8080 đã chạy, không mở server lần hai. Nếu cần 
 
 ## 3. Chọn bộ dịch trong ứng dụng
 
-1. Mở MangaEditor như thường lệ (`Win-Start.bat`).
+1. Mở MangaEditor như thường lệ (`Win-Start.bat`), ứng dụng sẽ quản lý server Hy-MT2 tự động.
 2. Vào **Settings > Translation**.
 3. **Translator:** chọn **Hy-MT2 1.8B (Offline / llama.cpp)** (`local_hymt2`).
 4. **Target Language:** **VIN** (Tiếng Việt). **Hy-MT2 Source Language:** `JPN` (Nhật), `CHS` (Trung giản thể), `CHT` (phồn thể), `ENG` (Anh), hoặc `auto` cho hỗn hợp. Với manga Nhật, để `JPN` thường ổn định hơn nhận diện văn bản ngắn.
@@ -60,7 +62,10 @@ Nếu có `data` chứa model id, server đã sẵn sàng nhận request. Mở h
 - Pipeline giữ nguyên: **Detection → OCR → Hy-MT2 → Inpainting → Typesetting → Editor / Export**.
 - Backend dịch từng vùng OCR theo thứ tự và trả về đúng số lượng vùng, tránh dán nhầm câu sang ô thoại khác.
 - Backend chỉ kết nối tới địa chỉ loopback (`localhost`, `127.0.0.1`, `::1`), không tự gởi nội dung manga tới server từ xa.
-- Model do **llama-server** quản lý; 'Unload Models After Translation' trong app không tắt server. Dừng server bằng Ctrl+C.
+- Model do **llama-server** quản lý; 'Unload Models After Translation' không tắt server. Nếu server được app tự mở, nó sẽ đóng khi thoát app; nếu mở bằng tay, dừng bằng Ctrl+C.
+- `app.auto_start_hymt2` bật theo mặc định; chỉ tự mở server khi bộ dịch đang chọn là `local_hymt2`. Chuyển sang bộ dịch này ngay trong giao diện cũng kích hoạt khởi động. Tắt công tắc nếu bạn muốn tự quản lý server.
+- Nếu llama.cpp chưa được cài, ứng dụng vẫn chạy bình thường; kiểm tra log để biết lý do server không được mở.
+- Một server có thể cần thời gian tải model. Nếu gặp lỗi không kết nối trong lần chạy đầu, xem `result/hymt2-server.log` và chờ server sẵn sàng rồi thử lại.
 - Lỗi dịch hoặc kết quả bị cắt sẽ báo lỗi thay vì tự gán nhầm bản dịch. Tăng timeout/tokens nếu cần.
 - Chưa có tự khởi động server bên trong app, quản lý GGUF trên giao diện, hoặc dịch nhiều vùng trong một request. Đây là tích hợp giai đoạn đầu; có thể nâng cấp.
 - Thử chất lượng Nhật → Việt trên trang truyện thực tế trước khi xử lý hàng loạt; OCR nhận sai thì bản dịch cũng có thể sai.

@@ -110,7 +110,10 @@ class LocalHyMT2ServerManager:
             return False
 
         with self._lock:
+            running = self._owned.get(port)
             if self._stopping or port in self._starting:
+                return False
+            if running is not None and running.poll() is None:
                 return False
             self._starting.add(port)
 
