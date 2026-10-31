@@ -50,7 +50,13 @@
     "local_max_input_tokens": 256,
     "local_max_new_tokens": 256,
     "local_num_beams": 3,
-    "local_files_only": false
+    "local_files_only": false,
+    "hymt_api_base": "http://127.0.0.1:8080/v1",
+    "hymt_model": "auto",
+    "hymt_source_lang": "JPN",
+    "hymt_timeout_seconds": 120,
+    "hymt_max_output_tokens": 512,
+    "hymt_context_regions": 0
   },
   "ocr": {
     "ocr": "48px",

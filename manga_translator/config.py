@@ -35,7 +35,7 @@ class TranslatorChain:
         """
         Returns True if the chain contains offline translators.
         """
-        return any(key == Translator.local_nllb for key, _lang in self.chain)
+        return any(key in {Translator.local_nllb, Translator.local_hymt2} for key, _lang in self.chain)
 
     def __eq__(self, __o: object) -> bool:
         if type(__o) is str:
@@ -128,6 +128,7 @@ class Translator(str, Enum):
     google_image_web = "google_image_web"
     google_web = "google_web"
     local_nllb = "local_nllb"
+    local_hymt2 = "local_hymt2"
     openai = "openai"
     openai_hq = "openai_hq"
     gemini = "gemini"
@@ -315,6 +316,14 @@ class TranslatorConfig(BaseModel):
     """Beam search width used by the local translator."""
     local_files_only: bool = False
     """Require model files to already exist locally; disables first-run download."""
+
+    # Hy-MT2 runs in a separate local llama-server, not in this Python process.
+    hymt_api_base: str = 'http://127.0.0.1:8080/v1'
+    hymt_model: str = 'auto'
+    hymt_source_lang: str = 'JPN'
+    hymt_timeout_seconds: int = 120
+    hymt_max_output_tokens: int = 512
+    hymt_context_regions: int = 0
 
     enable_streaming: bool = True
     """Enable unified streaming transport for supported AI translators."""

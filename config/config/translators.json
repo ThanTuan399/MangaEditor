@@ -24,6 +24,11 @@
     "display_name": "Local NLLB (Offline)",
     "required_env_vars": []
   },
+  "local_hymt2": {
+    "name": "local_hymt2",
+    "display_name": "Hy-MT2 1.8B (Offline / llama.cpp)",
+    "required_env_vars": []
+  },
   "openai": {
     "name": "openai",
     "display_name": "OpenAI",
