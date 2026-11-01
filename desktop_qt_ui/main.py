@@ -411,6 +411,9 @@ def main():
             from utils.local_hymt2_autostart import LocalHyMT2ServerManager
 
             hymt2_manager = LocalHyMT2ServerManager(root_dir)
+            # The OCR Workspace can explicitly start this same managed server,
+            # even when the main translator dropdown is set to another engine.
+            app._hymt2_manager = hymt2_manager
             config_service = get_config_service()
 
             def ensure_hymt2(_changed_config=None):

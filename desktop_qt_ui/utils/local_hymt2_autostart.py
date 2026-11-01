@@ -93,16 +93,17 @@ class LocalHyMT2ServerManager:
         self._owned: dict[int, subprocess.Popen] = {}
         self._stopping = False
 
-    def ensure_async(self, config) -> bool:
-        """Start when selected in Settings and automatic startup is enabled."""
+    def ensure_async(self, config, *, force: bool = False) -> bool:
+        """Start when selected, or explicitly requested by OCR Workspace."""
         if sys.platform != "win32":
             return False
         app_config = getattr(config, "app", None)
         translator = getattr(config, "translator", None)
-        if not getattr(app_config, "auto_start_hymt2", True):
-            return False
-        if str(getattr(translator, "translator", "")).strip() != "local_hymt2":
-            return False
+        if not force:
+            if not getattr(app_config, "auto_start_hymt2", True):
+                return False
+            if str(getattr(translator, "translator", "")).strip() != "local_hymt2":
+                return False
         address = getattr(translator, "hymt_api_base", "http://127.0.0.1:8080/v1")
         port = local_server_port(address)
         if port is None:

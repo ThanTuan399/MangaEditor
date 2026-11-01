@@ -80,3 +80,40 @@ def test_ocr_workspace_widget_constructs():
     assert panel.scan_button.isEnabled()
     panel.close()
     app.processEvents()
+
+
+def test_hymt_workspace_only_empty_by_default():
+    from desktop_qt_ui.ui.main_page.pages.ocr_workspace_page import _hymt_workspace_indices
+    regions = [
+        {"text": "こんにちは", "translation": ""},
+        {"text": "ありがとう", "translation": "Cảm ơn"},
+        {"text": "", "translation": ""},
+    ]
+    assert _hymt_workspace_indices(regions) == [0]
+    assert _hymt_workspace_indices(regions, overwrite=True) == [0, 1]
+
+
+def test_hymt_workspace_updates_translation_without_losing_ocr_geometry():
+    from desktop_qt_ui.ui.main_page.pages.ocr_workspace_page import _apply_hymt_workspace_results
+    region = {
+        "text": "こんにちは",
+        "lines": [[[1, 2], [5, 2], [5, 8], [1, 8]]],
+        "translation": "",
+        "translation_rich": {"stale": "format"},
+    }
+    assert _apply_hymt_workspace_results([region], [0], ["Xin chào"]) == 1
+    assert region["translation"] == "Xin chào"
+    assert region["translation_raw"] == "Xin chào"
+    assert "translation_rich" not in region
+    assert region["lines"] == [[[1, 2], [5, 2], [5, 8], [1, 8]]]
+    assert region["text"] == "こんにちは"
+
+
+def test_hymt_workspace_rejects_count_mismatch_without_touching_regions():
+    import pytest
+    from desktop_qt_ui.ui.main_page.pages.ocr_workspace_page import _apply_hymt_workspace_results
+    regions = [{"text": "a", "translation": "old"}]
+    with pytest.raises(ValueError, match="count"):
+        _apply_hymt_workspace_results(regions, [0], [])
+    assert regions[0]["translation"] == "old"
+
