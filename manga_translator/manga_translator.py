@@ -3928,10 +3928,20 @@ class MangaTranslator:
                                         logger.warning(f"Load text mode: detection-based mask generation failed, fallback to region mask ({e})")
 
                                 if ctx.mask_raw is None and ctx.mask is None:
-                                    mask = np.zeros_like(ctx.img_rgb[:, :, 0])
-                                    polygons = [p.reshape((-1, 1, 2)) for r in ctx.text_regions for p in r.lines]
-                                    cv2.fillPoly(mask, polygons, 255)
-                                    ctx.mask_raw = mask
+                                    # Project JSON stores polygon coordinates as float64.
+                                    # OpenCV fillPoly requires contiguous CV_32S points.
+                                    # Validate each polygon so malformed OCR geometry
+                                    # cannot crash OCR Workspace Render Batch.
+                                    from .mask_refinement.region_polygon_mask import mask_from_text_regions
+
+                                    ctx.mask_raw = mask_from_text_regions(
+                                        ctx.text_regions, ctx.img_rgb.shape[:2]
+                                    )
+                                    if not np.any(ctx.mask_raw):
+                                        logger.warning(
+                                            "Load text mode: no valid OCR polygons were found "
+                                            "for mask generation; using an empty mask"
+                                        )
                             
                             # load_text 模式下：无论是否超分，都强制对齐 mask 到当前图像尺寸，
                             # 避免 ONNX inpainting 因 image/mask 维度不一致而报错。
