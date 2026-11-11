@@ -121,7 +121,7 @@ def test_workspace_scans_only_selected_folder(tmp_path):
 
     app = QApplication.instance() or QApplication([])
     controller = Controller()
-    panel = OCRWorkspacePanel(controller)
+    panel = OCRWorkspacePanel(controller, t_func=lambda key, **kwargs: key.format(**kwargs))
     panel._scan_project()
     assert controller.scans[-1]["project_root"] == str(second)
     assert controller.scans[-1]["project_images"] == [str(second / "002.jpg")]
@@ -191,7 +191,7 @@ def test_workspace_render_cache_skips_unchanged_pages(tmp_path, monkeypatch):
 
     app = QApplication.instance() or QApplication([])
     controller = Controller()
-    panel = OCRWorkspacePanel(controller)
+    panel = OCRWorkspacePanel(controller, t_func=lambda key, **kwargs: key.format(**kwargs))
     panel._render_batch()
     assert len(controller.started) == 1
     assert len(controller.started[0]["project_images"]) == 2
