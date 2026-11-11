@@ -140,6 +140,30 @@ class OCRProjectRegistry:
         self.active = matching
         self._save()
 
+    def add_children(self, parent_folder: str | Path) -> list[str]:
+        """Register each immediate subfolder as a separate chapter/project."""
+        root = Path(parent_folder)
+        if not root.is_dir():
+            raise ValueError(f"Parent folder does not exist: {root}")
+        folders = sorted(
+            (folder for folder in root.iterdir()
+             if folder.is_dir() and not folder.is_symlink()
+             and folder.name.lower() not in _EXCLUDE_DIRS),
+            key=lambda folder: _natural_key(folder.name),
+        )
+        existing = {path_key(item) for item in self.folders}
+        added = []
+        for folder in folders:
+            path = norm_path(folder)
+            if path_key(path) not in existing:
+                self.folders.append(path)
+                added.append(path)
+                existing.add(path_key(path))
+        if added:
+            self.active = added[0]
+            self._save()
+        return added
+
     def remove(self, folder: str | Path) -> None:
         path = norm_path(folder)
         matching = next((item for item in self.folders if path_key(item) == path_key(path)), None)
