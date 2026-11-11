@@ -105,3 +105,20 @@ def test_paths_are_limited_to_project_folder(tmp_path):
     b.mkdir()
     assert within(a / "image.jpg", a)
     assert not within(b / "image.jpg", a)
+
+
+def test_add_all_child_directories_as_separate_projects(tmp_path):
+    parent = tmp_path / "Manga"
+    parent.mkdir()
+    chapters = [parent / "Chương 01", parent / "Chương 02"]
+    for item in chapters:
+        item.mkdir()
+        _image(item, "001.png")
+    _image(parent, "manga_translator_work/ocr_workspace_output/file.png")
+
+    registry = OCRProjectRegistry(tmp_path / "app")
+    new = registry.add_children(parent)
+    assert new == [norm_path(p) for p in chapters]
+    assert len(registry.folders) == 2
+    assert registry.images({".png"}) == [str(chapters[0] / "001.png")]
+    assert registry.add_children(parent) == []
