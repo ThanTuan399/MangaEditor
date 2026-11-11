@@ -126,8 +126,9 @@ def test_workspace_scans_only_selected_folder(tmp_path):
     assert controller.scans[-1]["project_root"] == str(second)
     assert controller.scans[-1]["project_images"] == [str(second / "002.jpg")]
 
-    panel.projects.select(str(first))
-    panel.refresh_sources()
+    # Verify actual UI selection callback, not just the registry model.
+    panel.project_combo.setCurrentIndex(0)
+    assert panel.projects.active == str(first)
     panel._scan_project()
     assert controller.scans[-1]["project_root"] == str(first)
     assert controller.scans[-1]["project_images"] == [str(first / "001.jpg")]
