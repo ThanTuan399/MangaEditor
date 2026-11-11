@@ -20,11 +20,17 @@ _EXCLUDE_DIRS = {
 
 
 def norm_path(path: str | Path) -> str:
-    return os.path.normcase(os.path.abspath(os.fspath(path)))
+    """Preserve Windows path letter case and accents for display and output."""
+    return os.path.abspath(os.fspath(path))
+
+
+def path_key(path: str | Path) -> str:
+    """Use case-insensitive keys for comparisons on Windows."""
+    return os.path.normcase(norm_path(path))
 
 
 def within(path: str | Path, folder: str | Path) -> bool:
-    path, folder = norm_path(path), norm_path(folder)
+    path, folder = path_key(path), path_key(folder)
     try:
         return os.path.commonpath([path, folder]) == folder
     except ValueError:
@@ -98,12 +104,13 @@ class OCRProjectRegistry:
             seen: set[str] = set()
             for item in raw.get("folders", []):
                 path = norm_path(item)
-                if path not in seen:
-                    seen.add(path)
+                if path_key(path) not in seen:
+                    seen.add(path_key(path))
                     self.folders.append(path)
             active = norm_path(raw["active"]) if raw.get("active") else None
-            self.active = active if active in self.folders else (
-                self.folders[0] if self.folders else None
+            self.active = next(
+                (item for item in self.folders if active and path_key(item) == path_key(active)),
+                self.folders[0] if self.folders else None,
             )
         except (OSError, ValueError, TypeError, KeyError):
             self.folders = []
@@ -118,24 +125,27 @@ class OCRProjectRegistry:
         path = norm_path(folder)
         if not os.path.isdir(path):
             raise ValueError(f"Project folder does not exist: {path}")
-        if path not in self.folders:
+        existing = next((item for item in self.folders if path_key(item) == path_key(path)), None)
+        if existing is None:
             self.folders.append(path)
-        self.active = path
+        self.active = existing or path
         self._save()
         return path
 
     def select(self, folder: str | Path) -> None:
         path = norm_path(folder)
-        if path not in self.folders:
+        matching = next((item for item in self.folders if path_key(item) == path_key(path)), None)
+        if matching is None:
             raise ValueError("Unknown OCR project folder")
-        self.active = path
+        self.active = matching
         self._save()
 
     def remove(self, folder: str | Path) -> None:
         path = norm_path(folder)
-        if path in self.folders:
-            self.folders.remove(path)
-            if self.active == path:
+        matching = next((item for item in self.folders if path_key(item) == path_key(path)), None)
+        if matching is not None:
+            self.folders.remove(matching)
+            if self.active == matching:
                 self.active = self.folders[0] if self.folders else None
             self._save()
 
@@ -145,14 +155,15 @@ class OCRProjectRegistry:
         if not root or not os.path.isdir(root):
             return []
         nested_projects = {
-            path for path in self.folders if path != root and within(path, root)
+            path_key(path) for path in self.folders
+            if path_key(path) != path_key(root) and within(path, root)
         }
         result: list[str] = []
         for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
             dirs[:] = sorted(
                 (folder for folder in dirs
                  if folder.lower() not in _EXCLUDE_DIRS
-                 and norm_path(os.path.join(current, folder)) not in nested_projects
+                 and path_key(os.path.join(current, folder)) not in nested_projects
                  and not os.path.islink(os.path.join(current, folder))),
                 key=_natural_key,
             )
