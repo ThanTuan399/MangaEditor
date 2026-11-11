@@ -4,12 +4,10 @@ import json
 import os
 import re
 import shutil
-import threading
-import time
 from typing import Any
 
-from PyQt6.QtCore import Qt, QRectF, pyqtSignal
-from PyQt6.QtGui import QBrush, QPainter, QPen, QPixmap
+from PyQt6.QtCore import Qt, QRectF, QUrl
+from PyQt6.QtGui import QBrush, QPainter, QPen, QPixmap, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -41,6 +39,7 @@ from qfluentwidgets import (
 
 from manga_translator.image_formats import SUPPORTED_IMAGE_EXTENSIONS
 from manga_translator.utils.path_manager import find_json_path
+from .ocr_project_registry import OCRProjectRegistry, norm_path, within, render_signature, render_config_digest
 
 
 def _allowed_image_extensions() -> set[str]:
@@ -141,54 +140,12 @@ class OCRImagePreview(QGraphicsView):
 
 
 
-def _hymt_workspace_indices(
-    regions: list[dict[str, Any]], *, overwrite: bool = False
-) -> list[int]:
-    """Only translate regions with source text; preserve completed work by default."""
-    return [
-        index
-        for index, region in enumerate(regions)
-        if str(region.get("text") or "").strip()
-        and (overwrite or not str(region.get("translation") or "").strip())
-    ]
-
-
-def _apply_hymt_workspace_results(
-    regions: list[dict[str, Any]],
-    indices: list[int],
-    translations: list[str],
-) -> int:
-    """Map each output to its original OCR region, preserving geometry and masks."""
-    if len(indices) != len(translations):
-        raise ValueError("Hy-MT2 result count does not match OCR regions")
-    if len(set(indices)) != len(indices):
-        raise ValueError("Duplicate region indices from Hy-MT2")
-    if any(not 0 <= index < len(regions) for index in indices):
-        raise ValueError("Invalid OCR region index in Hy-MT2 results")
-    if any(not isinstance(text, str) or not text.strip() for text in translations):
-        raise ValueError("Hy-MT2 returned an empty translation; nothing was changed")
-
-    count = 0
-    for index, value in zip(indices, translations):
-        region = regions[index]
-        changed = str(region.get("translation") or "") != value.strip()
-        region["translation"] = value.strip()
-        region["translation_raw"] = value.strip()
-        if changed:
-            region.pop("translation_rich", None)
-        count += 1
-    return count
-
-
 class OCRWorkspacePanel(QWidget):
-    """Fast OCR workspace with manual editing and optional local Hy-MT2.
+    """Manage isolated OCR project folders, edit translations, and render changed pages.
 
-    Image rendering remains a separate explicit action: translated text is
-    saved to project JSON and only Render Batch modifies exported images.
+    Render Batch always uses current project's images and never merges the
+    normal Translation page's global file sources.
     """
-
-    _hymt_result_ready = pyqtSignal(object)
-    _hymt_failed = pyqtSignal(str)
 
     def __init__(self, controller, t_func=lambda value: value, parent=None):
         super().__init__(parent)
@@ -201,8 +158,20 @@ class OCRWorkspacePanel(QWidget):
         self.current_regions: list[dict[str, Any]] = []
         self._dirty = False
         self._loading_table = False
-        self._hymt_busy = False
-        self._hymt_thread = None
+        app_root = getattr(getattr(controller, "config_service", None), "root_dir", None) or os.getcwd()
+        self.projects = OCRProjectRegistry(app_root)
+        # Preserve existing folders from the old global list on first launch,
+        # but register each as a distinct project rather than merging their pages.
+        if not self.projects.folders:
+            for source in list(getattr(controller, "source_files", []) or []):
+                folder = source if os.path.isdir(source) else os.path.dirname(source)
+                if folder and os.path.isdir(folder):
+                    try:
+                        self.projects.add(folder)
+                    except (OSError, ValueError):
+                        pass
+        self._pending_render_signatures: dict[str, str] = {}
+        self._pending_render_project: str | None = None
 
         self._build_ui()
         self._connect_signals()
@@ -217,6 +186,18 @@ class OCRWorkspacePanel(QWidget):
         toolbar_layout = QVBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(10, 8, 10, 8)
         toolbar_layout.setSpacing(6)
+        project_row = QHBoxLayout()
+        project_row.setSpacing(6)
+        self.project_title = BodyLabel("Dự án:")
+        self.project_combo = ComboBox()
+        self.project_combo.setMinimumWidth(270)
+        self.remove_project_button = PushButton("Bỏ khỏi danh sách")
+        self.open_output_button = PushButton("Mở ảnh đã render")
+        project_row.addWidget(self.project_title)
+        project_row.addWidget(self.project_combo, 1)
+        project_row.addWidget(self.remove_project_button)
+        project_row.addWidget(self.open_output_button)
+
         source_row = QHBoxLayout()
         source_row.setSpacing(6)
         edit_row = QHBoxLayout()
@@ -224,7 +205,7 @@ class OCRWorkspacePanel(QWidget):
 
         self.add_files_button = PushButton(self._t("Add Files"))
         self.add_files_button.setIcon(FIF.ADD)
-        self.add_folder_button = PushButton(self._t("Add Folder"))
+        self.add_folder_button = PushButton("Thêm thư mục dự án")
         self.add_folder_button.setIcon(FIF.FOLDER_ADD)
         self.scan_button = PrimaryPushButton(self._t("Scan OCR Only"))
         self.scan_button.setIcon(FIF.DOCUMENT)
@@ -243,23 +224,20 @@ class OCRWorkspacePanel(QWidget):
         self.copy_all_button = PushButton(self._t("Copy All OCR"))
         self.copy_selected_button = PushButton(self._t("Copy Selected"))
         self.paste_batch_button = PushButton(self._t("Paste Batch"))
-        self.hy_translate_button = PushButton("Dịch bằng Hy-MT2")
-        self.hy_translate_button.setToolTip(
-            "Dịch OCR của trang hiện tại bằng model GGUF trên máy. "
-            "Sau khi sửa bản dịch, chọn Render Batch để thay chữ trên ảnh."
-        )
         self.save_button = PrimaryPushButton(self._t("Save JSON"))
         self.export_button = PushButton(self._t("Export Batch TXT"))
-        self.render_batch_button = PushButton(self._t("Render Batch"))
+        self.render_batch_button = PushButton("Render trang đã đổi")
+        self.render_current_button = PushButton("Render trang đang chọn")
 
         edit_row.addWidget(self.copy_all_button)
         edit_row.addWidget(self.copy_selected_button)
         edit_row.addWidget(self.paste_batch_button)
-        edit_row.addWidget(self.hy_translate_button)
         edit_row.addStretch(1)
         edit_row.addWidget(self.save_button)
         edit_row.addWidget(self.export_button)
+        edit_row.addWidget(self.render_current_button)
         edit_row.addWidget(self.render_batch_button)
+        toolbar_layout.addLayout(project_row)
         toolbar_layout.addLayout(source_row)
         toolbar_layout.addLayout(edit_row)
         root.addWidget(toolbar)
@@ -334,8 +312,11 @@ class OCRWorkspacePanel(QWidget):
 
     def _connect_signals(self):
         self.add_files_button.clicked.connect(self._add_files)
-        self.add_folder_button.clicked.connect(self.controller.add_folder)
-        self.scan_button.clicked.connect(self.controller.start_ocr_workspace_scan)
+        self.add_folder_button.clicked.connect(self._add_project_folder)
+        self.remove_project_button.clicked.connect(self._remove_project)
+        self.open_output_button.clicked.connect(self._open_output_folder)
+        self.project_combo.currentIndexChanged.connect(self._on_project_changed)
+        self.scan_button.clicked.connect(self._scan_project)
         self.refresh_button.clicked.connect(self.refresh_sources)
         self.page_combo.currentIndexChanged.connect(self._on_page_changed)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -343,72 +324,143 @@ class OCRWorkspacePanel(QWidget):
         self.copy_all_button.clicked.connect(self.copy_all_ocr)
         self.copy_selected_button.clicked.connect(self.copy_selected)
         self.paste_batch_button.clicked.connect(self.paste_batch_from_clipboard)
-        self.hy_translate_button.clicked.connect(self.translate_current_page_hymt2)
-        self._hymt_result_ready.connect(self._on_hymt_result)
-        self._hymt_failed.connect(self._on_hymt_failure)
         self.save_button.clicked.connect(self.save_current)
         self.export_button.clicked.connect(self.export_batch_txt)
         self.render_batch_button.clicked.connect(self._render_batch)
+        self.render_current_button.clicked.connect(self._render_current)
 
         self.controller.file_sources_changed.connect(self.refresh_sources)
         self.controller.task_completed.connect(self._on_task_completed)
         self.controller.state_manager.is_translating_changed.connect(self._on_busy_changed)
 
     def _on_busy_changed(self, busy: bool):
-        self.scan_button.setEnabled(not (busy or self._hymt_busy))
-        self.render_batch_button.setEnabled(not (busy or self._hymt_busy))
-        self.hy_translate_button.setEnabled(not (busy or self._hymt_busy))
+        for widget in (
+            self.scan_button, self.render_batch_button, self.render_current_button,
+            self.project_combo, self.add_folder_button, self.remove_project_button,
+            self.add_files_button, self.table, self.save_button,
+        ):
+            widget.setEnabled(not busy)
         self.scan_button.setText(
             self._t("Scanning OCR...") if busy else self._t("Scan OCR Only")
         )
 
+    def _populate_project_combo(self):
+        self.project_combo.blockSignals(True)
+        try:
+            self.project_combo.clear()
+            for folder in self.projects.folders:
+                label = os.path.basename(folder.rstrip(os.sep)) or folder
+                self.project_combo.addItem(f"{label} — {folder}", userData=folder)
+            if self.projects.active in self.projects.folders:
+                self.project_combo.setCurrentIndex(
+                    self.projects.folders.index(self.projects.active)
+                )
+        finally:
+            self.project_combo.blockSignals(False)
+
+    def _add_project_folder(self):
+        if self.controller.state_manager.is_translating():
+            return
+        start = self.projects.active or self.controller.get_last_open_dir()
+        folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục truyện / dự án", start)
+        if not folder:
+            return
+        if self._dirty and not self.save_current():
+            return
+        try:
+            self.projects.add(folder)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Dự án", str(exc))
+            return
+        self.controller.set_last_open_dir(folder)
+        self.current_image_path = None
+        self.refresh_sources()
+
+    def _remove_project(self):
+        if self.controller.state_manager.is_translating():
+            return
+        folder = self.projects.active
+        if not folder:
+            return
+        if self._dirty and not self.save_current():
+            return
+        response = QMessageBox.question(
+            self, "Bỏ dự án",
+            f"Bỏ '{os.path.basename(folder)}' khỏi danh sách?\n"
+            "Thao tác này KHÔNG xóa ảnh, JSON hoặc bản dịch trên ổ đĩa.",
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+        self.projects.remove(folder)
+        self.current_image_path = None
+        self.refresh_sources()
+
+    def _open_output_folder(self):
+        folder = self.projects.active
+        if not folder:
+            return
+        output = self.projects.output_dir(folder)
+        output.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
+
+    def _on_project_changed(self, index: int):
+        folder = self.project_combo.itemData(index) if index >= 0 else None
+        if not folder or self.controller.state_manager.is_translating():
+            self._populate_project_combo()
+            return
+        if self._dirty and not self.save_current():
+            self._populate_project_combo()
+            return
+        self.projects.select(folder)
+        self.current_image_path = None
+        self.refresh_sources()
+
     def _add_files(self):
-        start_dir = self.controller.get_last_open_dir()
+        """Pick an existing image within the active folder; never mix projects."""
+        folder = self.projects.active
+        if not folder:
+            QMessageBox.information(self, "Dự án", "Hãy chọn Thêm thư mục dự án trước.")
+            return
         paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            self._t("Add Files"),
-            start_dir,
+            self, self._t("Add Files"), folder,
             self._t("Images") + " (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.avif *.heic *.heif)",
         )
-        if paths:
-            self.controller.set_last_open_dir(os.path.dirname(paths[0]))
-            self.controller.add_files(paths)
+        if not paths:
+            return
+        if any(not within(path, folder) for path in paths):
+            QMessageBox.warning(
+                self, "Dự án", "Ảnh phải nằm trong thư mục dự án hiện tại. "
+                "Muốn làm việc với thư mục khác, hãy thêm một dự án riêng."
+            )
+            return
+        if self._dirty and not self.save_current():
+            return
+        self.refresh_sources()
+        selected = norm_path(paths[0])
+        for idx, path in enumerate(self.image_paths):
+            if norm_path(path) == selected:
+                self.page_combo.setCurrentIndex(idx)
+                break
 
     def _collect_source_images(self) -> list[str]:
-        result: list[str] = []
-        seen: set[str] = set()
-        for source in list(getattr(self.controller, "source_files", []) or []):
-            path = os.path.normpath(source)
-            if os.path.isfile(path):
-                if os.path.splitext(path)[1].lower() in _IMAGE_EXTENSIONS:
-                    key = os.path.normcase(os.path.abspath(path))
-                    if key not in seen:
-                        seen.add(key)
-                        result.append(path)
-                continue
-            if not os.path.isdir(path):
-                continue
-            for root, dirs, files in os.walk(path):
-                dirs[:] = [
-                    name for name in dirs
-                    if name not in {"manga_translator_work", ".git", "__pycache__"}
-                ]
-                for name in files:
-                    candidate = os.path.join(root, name)
-                    if os.path.splitext(name)[1].lower() not in _IMAGE_EXTENSIONS:
-                        continue
-                    key = os.path.normcase(os.path.abspath(candidate))
-                    if key not in seen:
-                        seen.add(key)
-                        result.append(candidate)
-        result.sort(key=lambda p: p.lower())
-        return result
+        return self.projects.images(_IMAGE_EXTENSIONS)
+
+    def _scan_project(self):
+        if self._dirty and not self.save_current():
+            return
+        if not self.projects.active or not self.image_paths:
+            QMessageBox.information(self, "OCR Workspace", "Hãy thêm thư mục chứa ảnh trước.")
+            return
+        self.controller.start_ocr_workspace_scan(
+            project_images=list(self.image_paths), project_root=self.projects.active
+        )
 
     def refresh_sources(self):
         # UI refreshes and folder changes must not discard unsaved edits.
         if self._dirty and not self.save_current():
             return
         previous = self.current_image_path
+        self._populate_project_combo()
         self.image_paths = self._collect_source_images()
 
         self.page_combo.blockSignals(True)
@@ -433,10 +485,24 @@ class OCRWorkspacePanel(QWidget):
         else:
             self._clear_page()
             self.status_label.setText(
-                self._t("Add images/folders to the main file list, then press Scan OCR Only.")
+                "Chọn Thêm thư mục dự án, sau đó bấm Scan OCR Only."
             )
 
     def _on_task_completed(self, _paths):
+        if self._pending_render_project and getattr(self.controller, "last_completed_workflow", None) == "ocr_workspace_render":
+            project = self._pending_render_project
+            cache = self.projects.read_cache(project)
+            for output in (_paths or []):
+                source = self.controller.resolve_completed_source(output) if hasattr(self.controller, "resolve_completed_source") else None
+                key = norm_path(source) if source else None
+                if key in self._pending_render_signatures and os.path.isfile(output):
+                    cache[key] = {"signature": self._pending_render_signatures[key], "output": os.path.abspath(output)}
+            try:
+                self.projects.store_cache(project, cache)
+            except OSError as exc:
+                self.status_label.setText(f"Không lưu được cache render: {exc}")
+            self._pending_render_project = None
+            self._pending_render_signatures.clear()
         if self._dirty and not self.save_current():
             return
         self.refresh_sources()
@@ -723,6 +789,9 @@ class OCRWorkspacePanel(QWidget):
                 )
             return False
 
+        if not self._dirty:
+            self.status_label.setText(self._t("Project JSON saved."))
+            return True
         image_data = self._image_data(self.current_data)
         if image_data is None:
             return False
@@ -757,180 +826,66 @@ class OCRWorkspacePanel(QWidget):
 
 
 
-    def _set_hymt_busy(self, busy: bool):
-        self._hymt_busy = busy
-        for widget in (
-            self.table, self.page_combo, self.add_files_button,
-            self.add_folder_button, self.refresh_button,
-            self.copy_all_button, self.copy_selected_button,
-            self.paste_batch_button, self.save_button, self.export_button,
-        ):
-            widget.setEnabled(not busy)
-        state = getattr(self.controller, "state_manager", None)
-        translating = bool(state.is_translating()) if callable(getattr(state, "is_translating", None)) else False
-        self._on_busy_changed(translating)
-        self.hy_translate_button.setText(
-            "Hy-MT2 đang dịch..." if busy else "Dịch bằng Hy-MT2"
-        )
-
-    def translate_current_page_hymt2(self):
-        """Translate OCR text asynchronously without damaging previous region edits."""
-        if self._hymt_busy:
-            return
-        if not self.current_json_path or not self.current_regions:
-            QMessageBox.information(
-                self, "OCR Workspace",
-                "Chưa có vùng OCR. Hãy bấm Scan OCR Only trước."
-            )
-            return
-        state = getattr(self.controller, "state_manager", None)
-        if callable(getattr(state, "is_translating", None)) and state.is_translating():
-            QMessageBox.information(
-                self, "OCR Workspace", "Đang có tác vụ khác. Hãy hoàn thành tác vụ đó trước."
-            )
-            return
-
-        overwrite = False
-        filled = any(str(region.get("translation") or "").strip() for region in self.current_regions)
-        if filled:
-            answer = QMessageBox.question(
-                self, "Dịch bằng Hy-MT2",
-                "Trang đã có bản dịch.\n\n"
-                "Yes: dịch lại và thay thế TẤT CẢ bản dịch hiện có.\n"
-                "No: chỉ dịch các ô Translation còn trống.\n"
-                "Cancel: không thay đổi gì.",
-                QMessageBox.StandardButton.Yes |
-                QMessageBox.StandardButton.No |
-                QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.No,
-            )
-            if answer == QMessageBox.StandardButton.Cancel:
-                return
-            overwrite = answer == QMessageBox.StandardButton.Yes
-
-        indices = _hymt_workspace_indices(self.current_regions, overwrite=overwrite)
-        if not indices:
-            QMessageBox.information(
-                self, "Dịch bằng Hy-MT2",
-                "Không có ô Translation còn trống. Chọn Yes để dịch lại toàn bộ."
-            )
-            return
-
-        if self._dirty and not self.save_current():
-            return
-
-        try:
-            settings = self.controller.config_service.get_config()
-        except (AttributeError, RuntimeError) as exc:
-            QMessageBox.warning(self, "Hy-MT2", f"Không đọc được cấu hình ứng dụng: {exc}")
-            return
-        if settings.translator.target_lang != "VIN":
-            QMessageBox.warning(
-                self, "Hy-MT2",
-                "Chức năng này dịch sang tiếng Việt. "
-                "Hãy chọn Target Language = VIN trong Settings → Translation."
-            )
-            return
-
-        manager = getattr(QApplication.instance(), "_hymt2_manager", None)
-        if manager is not None:
-            # An explicit translation click starts the local server even when
-            # another translator is selected in normal Translation settings.
-            manager.ensure_async(settings, force=True)
-
-        texts = [str(self.current_regions[i].get("text") or "") for i in indices]
-        self._hymt_busy_indices = indices
-        self._hymt_busy_page = self.current_image_path
-        self._set_hymt_busy(True)
-        self.status_label.setText(
-            f"Hy-MT2 đang dịch {len(indices)} vùng OCR. Không cần mở server riêng."
-        )
-
-        def translate():
-            try:
-                from manga_translator.translators.local_hymt2 import LocalHyMT2Translator
-
-                engine = LocalHyMT2Translator()
-                engine.parse_args(settings)
-                # The server may need time to download/load GGUF the first time.
-                # Wait in a daemon thread, never freeze the Qt event loop.
-                max_wait = max(20, int(engine.timeout))
-                deadline = time.monotonic() + max_wait
-                while True:
-                    try:
-                        engine._resolve_model_name()
-                        break
-                    except Exception:
-                        if time.monotonic() >= deadline:
-                            raise RuntimeError(
-                                "Hy-MT2 chưa sẵn sàng. Kiểm tra result/hymt2-server.log "
-                                "hoặc chạy Win-Start-HyMT2.bat để xem lỗi tải/nạp model."
-                            )
-                        time.sleep(2)
-                translations = engine._translate_sync("auto", "Vietnamese", texts)
-                self._hymt_result_ready.emit(translations)
-            except Exception as exc:
-                self._hymt_failed.emit(str(exc))
-
-        self._hymt_thread = threading.Thread(
-            target=translate, name="ocr-workspace-hymt2", daemon=True,
-        )
-        self._hymt_thread.start()
-
-    def _on_hymt_result(self, translations: list[str]):
-        indices = list(getattr(self, "_hymt_busy_indices", []))
-        page = getattr(self, "_hymt_busy_page", None)
-        try:
-            if page != self.current_image_path:
-                raise RuntimeError("Trang ảnh đã thay đổi khi Hy-MT2 đang chạy.")
-            count = _apply_hymt_workspace_results(
-                self.current_regions, indices, translations
-            )
-            self._loading_table = True
-            try:
-                for index in indices:
-                    cell = self.table.item(index, 2)
-                    if cell is not None:
-                        cell.setText(str(self.current_regions[index]["translation"]))
-            finally:
-                self._loading_table = False
-            self._dirty = True
-            self.save_button.setText(self._t("Save JSON") + " *")
-            if self.save_current(silent=True):
-                self.status_label.setText(
-                    f"Đã dịch và lưu {count} vùng. "
-                    "Sửa cột Translation nếu cần, rồi bấm Render Batch để thay chữ lên ảnh."
-                )
-            else:
-                self.status_label.setText(
-                    "Đã dịch nhưng không lưu được JSON. Hãy bấm Save JSON trước khi render."
-                )
-        except Exception as exc:
-            QMessageBox.warning(self, "Hy-MT2", str(exc))
-            self.status_label.setText(f"Lỗi Hy-MT2: {exc}")
-        finally:
-            self._hymt_busy_indices = []
-            self._hymt_busy_page = None
-            self._set_hymt_busy(False)
-
-    def _on_hymt_failure(self, error: str):
-        self._hymt_busy_indices = []
-        self._hymt_busy_page = None
-        self._set_hymt_busy(False)
-        self.status_label.setText(f"Hy-MT2: {error}")
-        QMessageBox.warning(self, "Dịch bằng Hy-MT2", error)
-
     def _render_batch(self):
+        self._render_pages(only_current=False)
+
+    def _render_current(self):
+        self._render_pages(only_current=True)
+
+    def _render_pages(self, *, only_current: bool):
+        """Reuse successful exports and only render changed JSON / render settings."""
+        if self.controller.state_manager.is_translating():
+            return
         if self._dirty and not self.save_current():
             return
-        self.controller.start_ocr_workspace_render()
+        folder = self.projects.active
+        if not folder:
+            QMessageBox.information(self, "OCR Workspace", "Hãy chọn dự án trước.")
+            return
+        settings = self.controller.config_service.get_config().model_dump()
+        config_digest = render_config_digest(settings)
+        cache = self.projects.read_cache(folder)
+        images = [self.current_image_path] if only_current else self.image_paths
+        candidates = []
+        signatures = {}
+        skipped = 0
+        for image in images:
+            if not image or not within(image, folder):
+                continue
+            json_path = find_json_path(image)
+            if not json_path or not os.path.isfile(json_path):
+                continue
+            try:
+                signature = render_signature(image, json_path, config_digest)
+            except OSError:
+                continue
+            # Force the selected page on explicit user request; batch uses cache.
+            if not only_current and self.projects.cached(cache, image, signature):
+                skipped += 1
+                continue
+            candidates.append(image)
+            signatures[norm_path(image)] = signature
+        if not candidates:
+            self.status_label.setText(
+                f"Không có trang cần render. {skipped} trang đã có kết quả cập nhật."
+            )
+            return
+        self._pending_render_project = folder
+        self._pending_render_signatures = signatures
+        self.status_label.setText(
+            f"Đang render {len(candidates)} trang của '{os.path.basename(folder)}'; "
+            f"bỏ qua {skipped} trang không đổi."
+        )
+        self.controller.start_ocr_workspace_render(
+            project_images=candidates, project_root=folder
+        )
 
     def export_batch_txt(self):
         if self._dirty and not self.save_current():
             return
 
-        config = self.controller.config_service.get_config()
-        initial_dir = config.app.last_output_path or self.controller.config_service.root_dir
+        initial_dir = str(self.projects.output_dir(self.projects.active)) if self.projects.active else self.controller.config_service.root_dir
+        os.makedirs(initial_dir, exist_ok=True)
         default_path = os.path.join(initial_dir, "ocr_workspace_batch.txt")
         output_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1004,8 +959,8 @@ def create_ocr_workspace_page(self) -> QWidget:
     self.ocr_workspace_page_title_label = TitleLabel(self._t("OCR Workspace"))
     self.ocr_workspace_page_subtitle_label = BodyLabel(
         self._t(
-            "Fast manual-translation workspace: scan OCR only, copy text to any external translator, "
-            "paste/edit translations, compare against the raw page, and export text in batches."
+            "Quản lý nhiều dự án theo thư mục riêng. Quét OCR, copy sang Google Dịch, "
+            "dán/sửa bản dịch, rồi render những trang đã thay đổi."
         )
     )
     self.ocr_workspace_page_subtitle_label.setWordWrap(True)
