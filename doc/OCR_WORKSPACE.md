@@ -28,17 +28,6 @@ page's existing `manga_translator_work/json/*_translations.json` file first
 - Selecting a row highlights its saved region on the raw image.
 
 
-## Tích hợp Hy-MT2 (offline)
-
-Sau khi bấm **Scan OCR Only**, OCR Workspace giữ nguyên ảnh RAW và có các cột OCR/Translation.
-
-1. Bấm **Dịch bằng Hy-MT2** để dịch các vùng đã quét. Nếu trang đã có bản dịch, chọn **No** để chỉ dịch các ô trống; chọn **Yes** để dịch lại và ghi đè toàn bộ; **Cancel** để thoát.
-2. MangaEditor tự khởi động `llama-server` ở nền nếu cần, chờ server tải model và cập nhật cột Translation theo đúng vùng OCR. Phần mềm **tự lưu JSON sau khi dịch thành công**.
-3. Nhấp đúp vào cột **Translation** để chỉnh lại câu, xưng hô, dấu câu hoặc xuống dòng; sau đó bấm **Save JSON**.
-4. Bấm **Render Batch** để đọc JSON, chạy **Inpainting** (xóa chữ RAW) và **Typesetting** (chèn chữ Việt), rồi xuất ảnh trong thư mục kết quả. Ảnh RAW trong khung so sánh **không bị ghi đè**.
-
-**Lưu ý:** Nút Hy-MT2 dịch *trang đang chọn*; Render Batch xử lý tất cả trang có JSON trong danh sách nguồn. Nếu cần nhiều trang, chuyển lần lượt và dịch từng trang trước khi render. Không cần API key. Đặt **Target Language = VIN**; model GGUF được cài qua llama.cpp. Trên Windows, log server nằm tại `result/hymt2-server.log`. Lần đầu tải model có thể mất thời gian.
-
 ## External translation
 
 **Copy All OCR** copies the current page with stable markers:

@@ -405,6 +405,9 @@ class ConfigService(QObject):
                 loaded_data = migrate_legacy_custom_api_params_config(
                     json.loads(content)
                 )
+                # Migrate removed Hy-MT2 to the no-API/manual translation mode.
+                if loaded_data.get("translator", {}).get("translator") == "local_hymt2":
+                    loaded_data["translator"]["translator"] = "none"
 
             # 获取默认配置作为基础
             default_config = AppSettings()
@@ -1040,6 +1043,8 @@ class ConfigService(QObject):
             # 读取用户配置
             with open(self.user_config_path, "r", encoding="utf-8") as f:
                 user_data = migrate_legacy_custom_api_params_config(json.load(f))
+                if user_data.get("translator", {}).get("translator") == "local_hymt2":
+                    user_data["translator"]["translator"] = "none"
 
             # 同步配置（递归处理嵌套字典）
             synced_data = self._sync_dict(default_data, user_data)
