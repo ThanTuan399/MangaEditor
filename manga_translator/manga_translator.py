@@ -3844,7 +3844,25 @@ class MangaTranslator:
                             if not loaded_regions:
                                 logger.info(f"No text regions found in JSON for {os.path.basename(image_name)}, will render original image")
 
-                            self._prepare_loaded_regions(loaded_regions, use_text_as_translation=True)
+                            if self.ocr_workspace_render:
+                                # Manual OCR Workspace must not erase/retypeset
+                                # regions whose Translation cell is still empty.
+                                from .mask_refinement.ocr_region_selection import regions_to_replace
+                                original_count = len(loaded_regions)
+                                loaded_regions = regions_to_replace(loaded_regions)
+                                if len(loaded_regions) != original_count:
+                                    # The stored OCR mask can cover untranslated
+                                    # text; rebuild from translated polygons only.
+                                    loaded_mask = None
+                                    mask_is_refined = False
+                                    logger.info(
+                                        "OCR Workspace: rendering %d of %d translated regions only",
+                                        len(loaded_regions), original_count,
+                                    )
+                            self._prepare_loaded_regions(
+                                loaded_regions,
+                                use_text_as_translation=not self.ocr_workspace_render,
+                            )
 
                             ctx.text_regions = loaded_regions
                             ctx.skip_font_scaling = skip_font_scaling

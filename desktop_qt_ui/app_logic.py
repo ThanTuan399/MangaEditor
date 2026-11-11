@@ -2131,9 +2131,11 @@ class MainAppLogic(QObject):
         # Translation must never be called in this workflow.
         task_config.setdefault("translator", {})["translator"] = "none"
 
-        # Keep the output as close to raw as possible and avoid unrelated work.
+        # Keep output as close to raw as possible, without rebuilding masks
+        # for untranslated regions via imported YOLO detection.
         task_config.setdefault("colorizer", {})["colorizer"] = "none"
         task_config.setdefault("upscale", {})["upscale_ratio"] = None
+        task_config.setdefault("detector", {})["import_yolo_labels"] = False
 
         output_path = (
             os.path.join(project_root, "manga_translator_work", "ocr_workspace_output")

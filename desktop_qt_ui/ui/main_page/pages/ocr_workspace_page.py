@@ -856,6 +856,14 @@ class OCRWorkspacePanel(QWidget):
             if not json_path or not os.path.isfile(json_path):
                 continue
             try:
+                with open(json_path, "r", encoding="utf-8") as handle:
+                    project_data = json.load(handle)
+                image_data = self._image_data(project_data)
+                regions = image_data.get("regions", []) if image_data else []
+                if not any(str(region.get("translation") or "").strip()
+                           for region in regions if isinstance(region, dict)):
+                    # No replacements: preserve the unmodified RAW page.
+                    continue
                 signature = render_signature(image, json_path, config_digest)
             except OSError:
                 continue
