@@ -192,9 +192,11 @@ class OCRWorkspacePanel(QWidget):
         self.project_combo = ComboBox()
         self.project_combo.setMinimumWidth(270)
         self.remove_project_button = PushButton("Bỏ khỏi danh sách")
+        self.import_subfolders_button = PushButton("Thêm thư mục con")
         self.open_output_button = PushButton("Mở ảnh đã render")
         project_row.addWidget(self.project_title)
         project_row.addWidget(self.project_combo, 1)
+        project_row.addWidget(self.import_subfolders_button)
         project_row.addWidget(self.remove_project_button)
         project_row.addWidget(self.open_output_button)
 
@@ -314,6 +316,7 @@ class OCRWorkspacePanel(QWidget):
         self.add_files_button.clicked.connect(self._add_files)
         self.add_folder_button.clicked.connect(self._add_project_folder)
         self.remove_project_button.clicked.connect(self._remove_project)
+        self.import_subfolders_button.clicked.connect(self._add_child_projects)
         self.open_output_button.clicked.connect(self._open_output_folder)
         self.project_combo.currentIndexChanged.connect(self._on_project_changed)
         self.scan_button.clicked.connect(self._scan_project)
@@ -336,8 +339,8 @@ class OCRWorkspacePanel(QWidget):
     def _on_busy_changed(self, busy: bool):
         for widget in (
             self.scan_button, self.render_batch_button, self.render_current_button,
-            self.project_combo, self.add_folder_button, self.remove_project_button,
-            self.add_files_button, self.table, self.save_button,
+            self.project_combo, self.add_folder_button, self.import_subfolders_button,
+            self.remove_project_button, self.add_files_button, self.table, self.save_button,
         ):
             widget.setEnabled(not busy)
         self.scan_button.setText(
@@ -375,6 +378,35 @@ class OCRWorkspacePanel(QWidget):
         self.controller.set_last_open_dir(folder)
         self.current_image_path = None
         self.refresh_sources()
+
+    def _add_child_projects(self):
+        """Each immediate child directory becomes a separate OCR project."""
+        if self.controller.state_manager.is_translating():
+            return
+        start = self.projects.active or self.controller.get_last_open_dir()
+        parent = QFileDialog.getExistingDirectory(
+            self, "Chọn thư mục mẹ chứa các dự án", start
+        )
+        if not parent:
+            return
+        if self._dirty and not self.save_current():
+            return
+        try:
+            added = self.projects.add_children(parent)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Dự án", str(exc))
+            return
+        if not added:
+            QMessageBox.information(
+                self, "Dự án", "Không có thư mục con mới nào để thêm."
+            )
+            return
+        self.current_image_path = None
+        self.refresh_sources()
+        self.status_label.setText(
+            f"Đã thêm {len(added)} dự án từ các thư mục con. "
+            "Mỗi dự án có danh sách ảnh và kết quả riêng."
+        )
 
     def _remove_project(self):
         if self.controller.state_manager.is_translating():
