@@ -1811,22 +1811,34 @@ class MainAppLogic(QObject):
     # endregion
 
     # region 核心任务逻辑
-    def start_file_scanning(self, task_config: dict):
-        """启动后台文件扫描任务"""
+    def start_file_scanning(
+        self, task_config: dict, source_files_override=None, project_root=None
+    ):
+        """Scan optional project image paths without changing global sources."""
         self.state_manager.set_translating(True)
         self.state_manager.set_status_message("正在准备文件...")
 
         self._scan_request_id += 1
         request_id = self._scan_request_id
+        selected_files = list(source_files_override) if source_files_override is not None else list(self.source_files)
+        if project_root:
+            root = os.path.normpath(os.path.abspath(project_root))
+            if not os.path.isdir(root) or any(
+                not self._path_is_within(os.path.abspath(path), root)
+                for path in selected_files
+            ):
+                self.state_manager.set_translating(False)
+                self._ui_log("OCR project inputs must belong to the selected folder.", "ERROR")
+                return
         scanner_worker = FileScannerRunnable(
-            source_files=list(self.source_files),
-            excluded_subfolders=self.excluded_subfolders,
-            excluded_files=self.excluded_files,
+            source_files=selected_files,
+            excluded_subfolders=set() if project_root else self.excluded_subfolders,
+            excluded_files=set() if project_root else self.excluded_files,
             file_service=self.file_service,
             output_base_dir=task_config.get("app", {}).get("last_output_path", ""),
             overwrite_extract=bool(task_config.get("cli", {}).get("overwrite", True)),
             finished_callback=lambda *args: self.on_scanning_finished(
-                request_id, task_config, *args
+                request_id, task_config, *args, project_root=project_root
             ),
             error_callback=lambda error: self.on_scanning_error(request_id, error),
             progress_callback=self.on_worker_log
@@ -1860,6 +1872,7 @@ class MainAppLogic(QObject):
         archive_map,
         excluded_subfolders,
         excluded_files,
+        project_root=None,
     ):
         """文件扫描完成，启动翻译任务"""
         if request_id != self._scan_request_id or self._shutdown_started:
@@ -1869,10 +1882,15 @@ class MainAppLogic(QObject):
         self._ui_log(f"File scan completed: found {len(resolved_files)} files")
         self.current_worker = None
 
-        self.file_to_folder_map = file_map
-        self.archive_to_temp_map = archive_map
-        self.excluded_subfolders = excluded_subfolders
-        self.excluded_files = excluded_files
+        if project_root:
+            # A project is a separate work queue; never modify the main file list.
+            effective_map = {path: os.path.normpath(project_root) for path in resolved_files}
+        else:
+            self.file_to_folder_map = file_map
+            self.archive_to_temp_map = archive_map
+            self.excluded_subfolders = excluded_subfolders
+            self.excluded_files = excluded_files
+            effective_map = self.file_to_folder_map
         
         # 检查文件列表是否为空
         if not resolved_files:
@@ -1888,7 +1906,7 @@ class MainAppLogic(QObject):
             return
 
         # 启动真正的翻译任务
-        self._start_translation_worker(resolved_files, task_config)
+        self._start_translation_worker(resolved_files, task_config, file_map=effective_map)
 
     def on_scanning_error(self, request_id, error_msg):
         if request_id != self._scan_request_id or self._shutdown_started:
@@ -1902,7 +1920,7 @@ class MainAppLogic(QObject):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(None, "扫描失败", f"扫描文件时出错:\n{error_msg}")
 
-    def _start_translation_worker(self, files_to_process, task_config):
+    def _start_translation_worker(self, files_to_process, task_config, file_map=None):
         """启动翻译工作线程（内部方法，由扫描完成后调用）"""
         self.saved_files_count = 0
         self.completed_output_sources.clear()
@@ -1918,7 +1936,10 @@ class MainAppLogic(QObject):
             config_dict=task_config,
             output_folder=task_config.get("app", {}).get("last_output_path", ""),
             root_dir=self.config_service.root_dir,
-            file_to_folder_map=self.file_to_folder_map.copy(),
+            file_to_folder_map=(
+                file_map.copy() if file_map is not None
+                else self.file_to_folder_map.copy()
+            ),
             finished_callback=lambda results: self.on_task_finished(results, task_id),
             error_callback=lambda error: self.on_task_error(error, task_id),
             progress_callback=lambda current, total, message: self.on_task_progress(
@@ -1941,7 +1962,7 @@ class MainAppLogic(QObject):
         self.state_manager.set_translating(True)
         self.state_manager.set_status_message("正在翻译...")
 
-    def start_ocr_workspace_scan(self):
+    def start_ocr_workspace_scan(self, project_images=None, project_root=None):
         """Run the existing detector/OCR pipeline in the fastest project-data-only mode.
 
         This is intentionally independent from the normal workflow selector. It
@@ -1971,7 +1992,8 @@ class MainAppLogic(QObject):
             )
             return
 
-        if not self.source_files:
+        input_files = list(project_images) if project_images is not None else list(self.source_files)
+        if not input_files:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 None,
@@ -2037,20 +2059,28 @@ class MainAppLogic(QObject):
 
         # The worker infrastructure expects an output directory even though this
         # mode writes project JSON beside MangaEditor's normal project data.
-        output_path = task_config.setdefault("app", {}).get("last_output_path")
-        if not output_path or not os.path.isdir(output_path):
+        output_path = (
+            os.path.join(project_root, "manga_translator_work", "ocr_workspace_output")
+            if project_root else task_config.setdefault("app", {}).get("last_output_path")
+        )
+        if not output_path:
             output_path = os.path.join(self.config_service.root_dir, "result")
-            os.makedirs(output_path, exist_ok=True)
-            task_config["app"]["last_output_path"] = output_path
+        os.makedirs(output_path, exist_ok=True)
+        task_config.setdefault("app", {})["last_output_path"] = output_path
+        cli["save_to_source_dir"] = False
 
         self.last_completed_workflow = "ocr_workspace_scan"
         self._ui_log(
             "OCR Workspace scan started: Detection -> OCR -> Merge -> Save JSON "
             "(translation/inpainting/rendering disabled)."
         )
-        self.start_file_scanning(task_config)
+        self.start_file_scanning(
+            task_config,
+            source_files_override=input_files if project_root else None,
+            project_root=project_root,
+        )
 
-    def start_ocr_workspace_render(self):
+    def start_ocr_workspace_render(self, project_images=None, project_root=None):
         """Render all OCR Workspace JSON translations without translating again."""
         if self.state_manager.is_translating():
             self._ui_log("A task is already running.", "WARNING")
@@ -2074,7 +2104,8 @@ class MainAppLogic(QObject):
             )
             return
 
-        if not self.source_files:
+        input_files = list(project_images) if project_images is not None else list(self.source_files)
+        if not input_files:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 None,
@@ -2113,18 +2144,26 @@ class MainAppLogic(QObject):
         task_config.setdefault("colorizer", {})["colorizer"] = "none"
         task_config.setdefault("upscale", {})["upscale_ratio"] = None
 
-        output_path = task_config.setdefault("app", {}).get("last_output_path")
-        if not output_path or not os.path.isdir(output_path):
+        output_path = (
+            os.path.join(project_root, "manga_translator_work", "ocr_workspace_output")
+            if project_root else task_config.setdefault("app", {}).get("last_output_path")
+        )
+        if not output_path:
             output_path = os.path.join(self.config_service.root_dir, "result")
-            os.makedirs(output_path, exist_ok=True)
-            task_config["app"]["last_output_path"] = output_path
+        os.makedirs(output_path, exist_ok=True)
+        task_config.setdefault("app", {})["last_output_path"] = output_path
+        cli["save_to_source_dir"] = False
 
         self.last_completed_workflow = "ocr_workspace_render"
         self._ui_log(
             "OCR Workspace render started: Load JSON -> Inpaint -> Typeset -> Export "
             "(OCR and translation disabled)."
         )
-        self.start_file_scanning(task_config)
+        self.start_file_scanning(
+            task_config,
+            source_files_override=input_files if project_root else None,
+            project_root=project_root,
+        )
 
     def start_backend_task(self):
         """
