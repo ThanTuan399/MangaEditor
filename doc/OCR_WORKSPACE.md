@@ -27,7 +27,9 @@ page's existing `manga_translator_work/json/*_translations.json` file first
 được thêm vào trang chính thành một lượt scan/render nữa.
 
 1. Bấm **Thêm thư mục dự án**, chọn thư mục chứa ảnh RAW.
-2. Lặp lại để thêm nhiều dự án, kể cả các thư mục có tên tiếng Việt.
+2. Lặp lại để thêm nhiều dự án, kể cả các thư mục có tên tiếng Việt. Hoặc bấm
+   **Thêm thư mục con** và chọn thư mục mẹ: mỗi thư mục con trực tiếp sẽ
+   được đăng ký thành một dự án riêng, không gộp ảnh giữa các thư mục.
 3. Chọn dự án trong ô **Dự án** rồi bấm **Scan OCR Only**.
 4. Chọn một trang, dùng **Copy All OCR** để lấy text có marker [001], [002].
    Dán vào Google Dịch, sửa bản dịch nếu cần rồi dùng **Paste Batch**.
@@ -49,6 +51,10 @@ Danh sách dự án được ghi tại `config/ocr_workspace_projects.json` củ
 Nếu một thư mục dự án con cũng được đăng ký riêng, quét dự án mẹ
 sẽ bỏ qua thư mục con này. Các thư mục kết quả và cache nội bộ không được
 quét ngược lại như ảnh RAW.
+
+Khi một vùng không có nội dung trong cột **Translation**, chế độ OCR Workspace
+sẽ không xóa chữ gốc tại vùng đó. Nó chỉ tạo mask và vẽ lại những vùng có
+bản dịch cụ thể. Điều này không áp dụng cho chế độ Normal Translation.
 
 ### Tối ưu render
 
