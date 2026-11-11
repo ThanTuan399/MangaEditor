@@ -21,6 +21,54 @@ and manual edits are safe. To genuinely re-scan a page, move or rename that
 page's existing `manga_translator_work/json/*_translations.json` file first
 (keep it as a backup).
 
+## Quản lý nhiều dự án theo thư mục
+
+**Mỗi thư mục = một dự án riêng.** OCR Workspace không trộn tất cả ảnh
+được thêm vào trang chính thành một lượt scan/render nữa.
+
+1. Bấm **Thêm thư mục dự án**, chọn thư mục chứa ảnh RAW.
+2. Lặp lại để thêm nhiều dự án, kể cả các thư mục có tên tiếng Việt.
+3. Chọn dự án trong ô **Dự án** rồi bấm **Scan OCR Only**.
+4. Chọn một trang, dùng **Copy All OCR** để lấy text có marker [001], [002].
+   Dán vào Google Dịch, sửa bản dịch nếu cần rồi dùng **Paste Batch**.
+5. Nhấp đúp cột Translation để chỉnh nội dung và bấm **Save JSON**.
+6. **Render trang đã đổi**: chỉ xử lý các trang chưa có ảnh xuất, hoặc có
+   ảnh RAW/JSON/font/inpaint/layout đã thay đổi.
+7. **Render trang đang chọn**: ép xuất một trang để xem thử ngay,
+   không phải chạy lại toàn bộ dự án.
+8. Bấm **Mở ảnh đã render** để xem thư mục kết quả của dự án đó.
+
+Dự án có thể chuyển đổi qua lại trong một phiên làm việc nhưng mỗi lúc
+chỉ chạy một tác vụ Scan/Render, tránh trộn dữ liệu và chiếm RAM.
+Bấm **Bỏ khỏi danh sách** chỉ gỡ dự án khỏi giao diện, **không xóa dữ liệu**.
+
+Ảnh RAW và OCR JSON vẫn ở thư mục nguồn. Kết quả xuất của từng dự án nằm tại:
+`<folder>/manga_translator_work/ocr_workspace_output/<tên thư mục>/...`.
+
+Danh sách dự án được ghi tại `config/ocr_workspace_projects.json` của app.
+Nếu một thư mục dự án con cũng được đăng ký riêng, quét dự án mẹ
+sẽ bỏ qua thư mục con này. Các thư mục kết quả và cache nội bộ không được
+quét ngược lại như ảnh RAW.
+
+### Tối ưu render
+
+Cache các lượt render **thành công** lưu tại:
+`<folder>/manga_translator_work/ocr_workspace_render_cache.json`.
+
+Khi Render trang đã đổi, chương trình so nội dung JSON, metadata ảnh RAW,
+thiết lập font/layout/inpainting và sự tồn tại của file ảnh xuất. Trang không
+đổi sẽ được bỏ qua. Nếu xóa file ảnh xuất hoặc sửa một câu đã dịch, trang đó
+sẽ được xuất lại. Lần đầu vẫn chạy đủ inpainting; tốc độ phụ thuộc ảnh/model.
+Chọn **Render trang đang chọn** để bắt buộc render lại khi muốn thử thủ công.
+
+### Hy-MT2 đã được loại bỏ
+
+App không tự chạy llama-server, không còn lựa chọn Hy-MT2 trong bộ dịch.
+Cấu hình cũ chọn local_hymt2 sẽ được đổi sang none, tránh tự gọi dịch vụ.
+Bạn vẫn copy OCR → Google Dịch bên ngoài → Paste Batch → Render.
+Không cần gỡ llama.cpp hay xóa GGUF trên máy để tiếp tục dùng app.
+
+
 ## Two-pane workflow
 
 - Left: region number, editable OCR text, editable translation.
@@ -57,10 +105,10 @@ plain translation changes.
 
 - **Export Batch TXT** exports OCR + current translations for all pages in the
   workspace.
-- **Render Batch** reads the edited project JSON directly, skips OCR and
-  translation, then runs only the necessary inpainting/typesetting/export
-  stages. Old TXT sidecars are intentionally ignored so they cannot overwrite
-  workspace edits.
+- **Render trang đã đổi** chỉ render trang có bản dịch hoặc thiết lập đã thay đổi,
+  không chạy OCR hoặc dịch lại, và bỏ qua các trang đã xuất thành công.
+- **Render trang đang chọn** ép xuất duy nhất trang hiện tại.
+- TXT cũ không được phép ghi đè lại bản dịch đã lưu trong JSON.
 
 ## Speed recommendations
 
